@@ -184,12 +184,16 @@ Claude Code / Codex ──stdio──> pymol-mcp ──HTTP (127.0.0.1, token)�
   agent command removed objects. If you hit it yourself in the GUI, run `undo_clear_cache`.
 * **Headless feedback.** Command output such as `Executive: RMSD = ...` goes to the process' C-level stdout; the
   bridge captures it per command so `run` and `log` show it.
+* **Weak OpenGL (VMs, remote desktops, CI).** On contexts without shader support (PyMOL turns `use_shaders` off,
+  e.g. Microsoft's "GDI Generic" OpenGL 1.1) an offscreen `draw` crashes PyMOL, and so does `scene ... store`
+  (it renders a thumbnail). The bridge then renders with the CPU ray tracer (`fallback` in the reply) and the ID
+  pass saves/restores state without scenes. `MOLMCP_PYMOL_FORCE_DRAW=1` / `MOLMCP_PYMOL_FORCE_RAY=1` override the probe.
 
 ## What has been verified where
 
 | | macOS (this build) | Linux (x86_64 container) | Windows |
 |---|---|---|---|
-| PyMOL GUI: run / scene / render / layout / events / compare | tested, PyMOL 3.1.5 | n/a (no display) | not tested (no Windows machine) |
+| PyMOL GUI: run / scene / render / layout / events / compare | tested, PyMOL 3.1.5 | n/a (no display) | **tested on the Windows runner**: Qt window launched by the server (`-r` launch script), status/run/scene, render and ID pass via the ray-tracer fallback (the runner only has OpenGL 1.1), quit |
 | PyMOL headless (library mode, ray renders) | tested | tested, open-source PyMOL 3.1 via conda-forge | **tested on a real Windows runner (GitHub Actions `windows-latest`, Python 3.11 + open-source PyMOL 3.2 wheel): MCP stdio client -> server -> headless PyMOL launched by the server, run/scene/render/quit** ([ci.yml](.github/workflows/ci.yml)); also under Wine |
 | PyMOL plugin install through PyMOL's plugin prefs | tested | tested | tested on the Windows runner and under Wine (`%APPDATA%\pymol\startup`, PyMOL prefs updated) |
 | Installer: venv, `.exe` console scripts, Claude/Codex config files | tested | tested | tested on the Windows runner and under Wine (`.venv\Scripts\pymol-mcp.exe`, `%USERPROFILE%\.claude.json`, `.codex\config.toml`) |

@@ -93,12 +93,11 @@ jobs:
     permissions:
       contents: read
       statuses: write
-    # Best-effort GUI path on the Windows runner: PyMOL's Qt window with the plugin started via -r, driven through
-    # the MCP server (render uses the GUI draw/png path).  Runners expose only a basic software OpenGL, so this
-    # job documents whether the GUI bridge works there; it does not gate the headless job above.
+    # GUI path on the Windows runner: PyMOL's Qt window with the bridge started via -r, driven through the MCP
+    # server.  The runner's OpenGL is Microsoft's 1.1 "GDI Generic", so renders and the ID pass take the bridge's
+    # ray-tracer fallback (the same path a VM or remote desktop gets).
     runs-on: windows-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

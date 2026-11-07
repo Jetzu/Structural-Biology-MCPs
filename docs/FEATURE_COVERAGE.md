@@ -57,7 +57,9 @@ launched, so GUI-specific statements come from reading the source and the shippe
 > the earlier report now takes 1.2 s (3.7 s with occlusion). **Windows:** a GitHub Actions job on `windows-latest` now runs the installer, the 44 unit
 > tests and the MCP stdio client end to end against `pymol-mcp`, which launches a headless open-source PyMOL on
 > the runner (the stdio disconnect seen under Wine was a Wine artefact). ChimeraX on Windows remains untested
-> (licence click-through).
+> (licence click-through). A second Windows job drives the **PyMOL GUI** (Qt window started by the server) through the
+> bridge; it exposed two OpenGL-1.1 crashes (offscreen `draw`, `scene store` thumbnails) now avoided by a shader probe
+> with a ray-tracer fallback and a scene-free ID pass.
 
 ## 1. Short answer
 
