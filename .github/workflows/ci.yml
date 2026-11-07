@@ -114,13 +114,82 @@ jobs:
           echo "PYMOL_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
       - name: Installer (plugin into %APPDATA%\pymol\startup via PyMOL's prefs)
         run: python install.py --pymol --claude
-      - name: MCP end-to-end against the PyMOL GUI launched by the server (-r launch script)
+      - name: Launch the PyMOL GUI with the bridge (-r launch script) and wait for its discovery file
+        shell: bash
         env:
-          MOLMCP_PYMOL_LAUNCH_MODE: gui
+          QT_OPENGL: software
+        run: |
+          python - <<'PY'
+          import os, subprocess, time, glob, json, sys
+          exe = os.environ["PYMOL_EXE"]; script = os.path.abspath("molmcp/inapp/pymol/molmcp_pymol_launch.py")
+          print("launching", exe, "-r", script, flush=True)
+          p = subprocess.Popen([exe, "-r", script], creationflags=0x00000008 | 0x00000200,
+                               stdin=subprocess.DEVNULL, stdout=open("pymol_gui.log", "w"), stderr=subprocess.STDOUT)
+          d = os.path.join(os.path.expanduser("~"), ".molmcp", "instances")
+          for i in range(120):
+              files = glob.glob(os.path.join(d, "pymol-*.json"))
+              if files:
+                  print("bridge file:", files[0]); print(open(files[0]).read()[:400]); sys.exit(0)
+              if p.poll() is not None:
+                  print("pymol exited with", p.returncode); break
+              time.sleep(1)
+          print("--- pymol_gui.log ---"); print(open("pymol_gui.log", errors="replace").read()[-3000:])
+          sys.exit(1)
+          PY
+      - name: status + run + scene through the MCP server (no rendering)
         shell: bash
         run: |
-          .venv/Scripts/python.exe -u tests/e2e_mcp_client.py pymol --launch 2>&1 | grep -vE '^\s+"(rgb|hex|px|frac|ascii)"|^\s+[0-9.,-]+$|^\s+\],?$|^\s+"[^"]*",?$' | tail -120
-          test ${PIPESTATUS[0]} -eq 0
+          .venv/Scripts/python.exe - <<'PY'
+          import asyncio, os, sys, json
+          sys.path.insert(0, "tests")
+          from e2e_mcp_client import stdio_client, StdioServerParameters, ClientSession, text_of
+          async def go():
+              p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/pymol-mcp.exe"), args=[], env=dict(os.environ))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      st = json.loads(text_of(await s.call_tool("status", {}))); print("status:", {k: st.get(k) for k in ("connected", "connected_pid", "windows")})
+                      assert st.get("connected"), st
+                      run = json.loads(text_of(await s.call_tool("run", {"commands": ["fragment ala", "show sticks", "orient"]}))); print("run:", run.get("all_ok"), run.get("changes"))
+                      assert run.get("all_ok"), run
+                      sc = json.loads(text_of(await s.call_tool("scene", {}))); print("scene gui:", sc.get("gui"), [o["name"] for o in sc.get("objects", [])])
+                      assert sc.get("gui") is True, sc
+          asyncio.run(go())
+          PY
+      - name: render through the GUI draw path
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe - <<'PY'
+          import asyncio, os, sys, json
+          sys.path.insert(0, "tests")
+          from e2e_mcp_client import stdio_client, StdioServerParameters, ClientSession, text_of
+          async def go():
+              p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/pymol-mcp.exe"), args=[], env=dict(os.environ))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      r1 = json.loads(text_of(await s.call_tool("render", {"width": 320, "height": 240})))
+                      a = r1.get("analysis", {}); print("render:", r1.get("path"), "coverage", a.get("coverage"), "bbox", a.get("bbox"), "palette", [x["name"] for x in a.get("palette", [])][:4], "error", r1.get("error"))
+                      assert a.get("coverage", 0) > 0.001, r1
+          asyncio.run(go())
+          PY
+      - name: layout (ID pass) through the GUI
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe - <<'PY'
+          import asyncio, os, sys, json
+          sys.path.insert(0, "tests")
+          from e2e_mcp_client import stdio_client, StdioServerParameters, ClientSession, text_of
+          async def go():
+              p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/pymol-mcp.exe"), args=[], env=dict(os.environ))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      lay = json.loads(text_of(await s.call_tool("layout", {"by": "object", "width": 320, "height": 240})))
+                      items = lay.get("layout", {}).get("items", []); print("layout:", [(i["label"], i.get("visible"), i.get("pixels")) for i in items], "error", lay.get("error"))
+                      assert items and items[0].get("visible"), lay
+          asyncio.run(go())
+          PY
       - name: Quit the PyMOL window
         if: always()
         shell: bash
