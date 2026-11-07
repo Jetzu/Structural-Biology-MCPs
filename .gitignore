@@ -6,3 +6,8 @@ dist/
 build/
 .DS_Store
 tests/docker/chimerax.deb
+
+# structure files fetched into the repo by accident
+/*.cif
+/*.pdb
+/*.pdb1
