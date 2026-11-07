@@ -16,6 +16,11 @@ def agent_status(session):
     return ops.status(session)
 
 
+def agent_name(session, name=""):
+    from . import ops
+    return ops.set_name(session, name)
+
+
 def agent_chat(session):
     from . import tool
     t = tool.get_tool(session, create=True)
@@ -48,6 +53,7 @@ def register_commands(logger):
     register("agent status", CmdDesc(synopsis="Show molmcp agent bridge connection info"), agent_status, logger=logger)
     register("agent info", CmdDesc(synopsis="Show molmcp agent bridge connection info"), agent_status, logger=logger)
     register("agent chat", CmdDesc(synopsis="Open the Agent Chat panel (Claude Code / Codex)"), agent_chat, logger=logger)
+    register("agent name", CmdDesc(optional=[("name", RestOfLine)], synopsis="Name this window so an agent can pick it (MCP status tool)"), agent_name, logger=logger)
     register("claude", CmdDesc(required=[("text", RestOfLine)], synopsis="Ask Claude Code about this session (uses the chimerax MCP server)"),
              claude, logger=logger)
     register("codex", CmdDesc(required=[("text", RestOfLine)], synopsis="Ask Codex about this session (uses the chimerax MCP server)"),

@@ -31,6 +31,51 @@ def start_run(backend, prompt, callback, allow_shell=False):
     return run.start()
 
 
+_toolbar_btn = None
+
+
+def add_toolbar_button():
+    """Put an 'Agent' button into PyMOL's top toolbar, right next to 'Builder...' (PyMOL 3 Qt GUI)."""
+    global _toolbar_btn
+    window = _gui_window()
+    if window is None or _toolbar_btn is not None:
+        return _toolbar_btn
+    tb = getattr(window, "topToolBar", None)
+    lay = getattr(tb, "mainLayout", None)
+    if tb is None or lay is None:
+        return None
+    try:
+        from pmg_qt.top_toolbar.top_panel_dialog import TopToolBarButton
+        btn = TopToolBarButton("Agent", tb)
+    except Exception:
+        from pymol.Qt import QtWidgets
+        btn = QtWidgets.QPushButton("Agent")
+    btn.setToolTip("Open the Agent Chat (Claude Code / Codex) for this PyMOL session")
+    btn.setObjectName("molmcp_agent_button")
+    btn.clicked.connect(lambda *_: toggle_panel())
+    anchor = getattr(tb, "builderButton", None)
+    idx = lay.indexOf(anchor) if anchor is not None else -1
+    try:
+        line = tb._create_vert_line()
+    except Exception:
+        line = None
+    if idx >= 0:
+        lay.insertWidget(idx, btn)
+        if line is not None:
+            lay.insertWidget(idx + 1, line)
+    else:
+        lay.addWidget(btn)
+    _toolbar_btn = btn
+    return btn
+
+
+def toggle_panel():
+    if _dock is not None and _dock.isVisible():
+        _dock.hide()
+        return None
+    return show_panel()
+
+
 def show_panel():
     """Create (once) and show the dock; returns it, or None without a GUI."""
     global _dock
@@ -42,7 +87,7 @@ def show_panel():
         from . import agentchat_ui
         widget = agentchat_ui.make_chat_widget(QtWidgets, QtCore, QtGui, app="pymol", pid=os.getpid(),
                                                start_run=start_run, sessions=_sessions, cwd=os.getcwd(),
-                                               find_backend=agentcli.find_backend, title="Agent Chat for PyMOL")
+                                               find_backend=agentcli.find_backend, title="Agent Chat for PyMOL", agentcli=agentcli)
         _dock = QtWidgets.QDockWidget("Agent Chat (Claude Code / Codex)", window)
         _dock.setObjectName("molmcp_agent_chat")
         _dock.setWidget(widget)
@@ -103,3 +148,4 @@ def register_commands(cmd):
     cmd.extend("claude", _mk("claude"))
     cmd.extend("codex", _mk("codex"))
     cmd.extend("agent_chat", lambda: show_panel())
+    cmd.extend("agent_button", lambda: add_toolbar_button())

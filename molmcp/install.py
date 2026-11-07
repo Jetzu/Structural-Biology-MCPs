@@ -260,9 +260,13 @@ def build_chimerax_wheel(dist_dir: str) -> str:
         "Classifier: ChimeraX :: Command :: agent status :: General :: Show molmcp agent bridge connection info",
         "Classifier: ChimeraX :: Command :: agent info :: General :: Show molmcp agent bridge connection info",
         "Classifier: ChimeraX :: Command :: agent chat :: General :: Open the Agent Chat panel (Claude Code / Codex)",
+        "Classifier: ChimeraX :: Command :: agent name :: General :: Name this ChimeraX window for the agent",
         "Classifier: ChimeraX :: Command :: claude :: General :: Ask Claude Code about this session",
         "Classifier: ChimeraX :: Command :: codex :: General :: Ask Codex about this session",
         "Classifier: ChimeraX :: Tool :: Agent Chat :: General :: Chat with Claude Code or Codex about this ChimeraX session",
+        "Classifier: ChimeraX :: Provider :: agent-tab :: toolbar :: tab:Agent :: after:Markers",
+        "Classifier: ChimeraX :: Provider :: agent-section :: toolbar :: tab:Agent :: section:\"Claude / Codex\"",
+        "Classifier: ChimeraX :: Provider :: agent-chat-button :: toolbar :: tab:Agent :: section:\"Claude / Codex\" :: display_name:\"Agent Chat\" :: icon:agent_chat.png :: description:\"Chat with Claude Code or Codex about this session\"",
         "Requires-Python: >=3.7",
         "Requires-Dist: ChimeraX-Core",
         "",
@@ -273,7 +277,7 @@ def build_chimerax_wheel(dist_dir: str) -> str:
     records = []
     with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for fn in sorted(os.listdir(pkg_dir)):
-            if not fn.endswith(".py"):
+            if not (fn.endswith(".py") or fn.endswith(".png")):
                 continue
             with open(os.path.join(pkg_dir, fn), "rb") as f:
                 data = f.read()

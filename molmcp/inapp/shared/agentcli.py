@@ -125,6 +125,79 @@ def find_backend(backend: str) -> Optional[str]:
     return find_claude() if backend == "claude" else find_codex()
 
 
+def available_backends() -> List[str]:
+    """Backends whose CLI is installed and runs (so the UI can hide the missing one)."""
+    return [b for b in BACKENDS if find_backend(b)]
+
+
+BACKEND_LABELS = {"claude": "Claude Code", "codex": "Codex"}
+# Model choices offered in the UI (free text is always allowed via /model <name>)
+MODEL_CHOICES = {
+    "claude": [("", "default"), ("fable", "fable"), ("opus", "opus"), ("sonnet", "sonnet"), ("haiku", "haiku")],
+    "codex": [("", "default (config.toml)"), ("gpt-5-codex", "gpt-5-codex"), ("gpt-5", "gpt-5"), ("o3", "o3"), ("gpt-6-sol", "gpt-6-sol")],
+}
+EFFORT_CHOICES = {
+    "claude": ["", "low", "medium", "high", "xhigh", "max"],
+    "codex": ["", "minimal", "low", "medium", "high", "xhigh"],
+}
+_SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".molmcp", "agent_settings.json")
+
+
+def load_settings() -> dict:
+    path = os.environ.get("MOLMCP_AGENT_SETTINGS", _SETTINGS_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return d
+    except Exception:
+        pass
+    return {}
+
+
+def save_settings(d: dict) -> None:
+    path = os.environ.get("MOLMCP_AGENT_SETTINGS", _SETTINGS_FILE)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=1)
+    except Exception:
+        pass
+
+
+def backend_settings(backend: str) -> dict:
+    """{"model": str, "effort": str} for a backend, persisted per user."""
+    d = load_settings().get(backend, {})
+    return {"model": d.get("model", ""), "effort": d.get("effort", "")}
+
+
+def set_backend_settings(backend: str, model: Optional[str] = None, effort: Optional[str] = None) -> dict:
+    d = load_settings()
+    cur = d.get(backend, {})
+    if model is not None:
+        cur["model"] = model
+    if effort is not None:
+        cur["effort"] = effort
+    d[backend] = cur
+    d.setdefault("default_backend", backend)
+    save_settings(d)
+    return cur
+
+
+def default_backend() -> str:
+    d = load_settings().get("default_backend")
+    avail = available_backends()
+    if d in avail:
+        return d
+    return avail[0] if avail else "claude"
+
+
+def set_default_backend(backend: str) -> None:
+    d = load_settings()
+    d["default_backend"] = backend
+    save_settings(d)
+
+
 # Variables the viewer's launcher sets for its *own* bundled Python/Qt; inherited by the CLI (and by the MCP
 # server it spawns from a different Python) they break interpreter start-up ("connection closed").
 _STRIP_ENV_EXACT = {"PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE", "PYTHONNOUSERSITE", "PYTHONSTARTUP", "PYTHONSAFEPATH",
@@ -155,21 +228,29 @@ def _app_title(app: str) -> str:
 
 
 def build_argv(backend: str, exe: str, prompt: str, app: str, pid: int, session_id: Optional[str] = None,
-               allow_shell: bool = False) -> List[str]:
+               allow_shell: bool = False, model: str = "", effort: str = "") -> List[str]:
     context = SYSTEM_CONTEXT.format(app=app, app_title=_app_title(app), pid=pid)
     if backend == "claude":
         argv = [exe, "-p", prompt, "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                 "--allowedTools", "mcp__%s" % app + (",Bash,Edit,Write" if allow_shell else ""),
                 "--append-system-prompt", context]
+        if model:
+            argv += ["--model", model]
+        if effort:
+            argv += ["--effort", effort]
         if session_id:
             argv += ["--resume", session_id]
         return argv
     if backend == "codex":
         full_prompt = prompt if session_id else "%s\n\nUser request: %s" % (context, prompt)
-        base = [exe, "exec", "--json", "--approve-for-me", "--skip-git-repo-check"]
+        opts = ["--json", "--approve-for-me", "--skip-git-repo-check"]
+        if model:
+            opts += ["-m", model]
+        if effort:
+            opts += ["-c", 'model_reasoning_effort="%s"' % effort]
         if session_id:
-            return [exe, "exec", "resume", "--json", "--approve-for-me", "--skip-git-repo-check", session_id, full_prompt]
-        return base + [full_prompt]
+            return [exe, "exec", "resume"] + opts + [session_id, full_prompt]
+        return [exe, "exec"] + opts + [full_prompt]
     raise ValueError("unknown backend %r" % backend)
 
 
@@ -282,7 +363,8 @@ class AgentRun:
 
     def __init__(self, backend: str, prompt: str, app: str, pid: int, callback: Callable,
                  session_id: Optional[str] = None, cwd: Optional[str] = None, allow_shell: bool = False,
-                 exe: Optional[str] = None, extra_env: Optional[dict] = None):
+                 exe: Optional[str] = None, extra_env: Optional[dict] = None, model: Optional[str] = None,
+                 effort: Optional[str] = None):
         if backend not in BACKENDS:
             raise ValueError("backend must be one of %s" % (BACKENDS,))
         self.backend = backend
@@ -290,7 +372,10 @@ class AgentRun:
         if not self.exe:
             raise RuntimeError("%s CLI not found. Install it or set %s." % (
                 "Claude Code" if backend == "claude" else "Codex", "MOLMCP_CLAUDE_EXE" if backend == "claude" else "MOLMCP_CODEX_EXE"))
-        self.argv = build_argv(backend, self.exe, prompt, app, pid, session_id, allow_shell)
+        st = backend_settings(backend)
+        self.model = st["model"] if model is None else model
+        self.effort = st["effort"] if effort is None else effort
+        self.argv = build_argv(backend, self.exe, prompt, app, pid, session_id, allow_shell, self.model, self.effort)
         self.app, self.pid, self.callback, self.cwd = app, pid, callback, cwd
         self.env = clean_env()
         self.env["MOLMCP_%s_PID" % app.upper()] = str(pid)

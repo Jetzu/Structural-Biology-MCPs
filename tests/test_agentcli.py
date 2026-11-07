@@ -129,3 +129,31 @@ class TestRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestModelSettings(unittest.TestCase):
+    def test_model_and_effort_flags(self):
+        argv = agentcli.build_argv("claude", "/x/claude", "hi", "pymol", 1, model="opus", effort="high")
+        self.assertEqual(argv[argv.index("--model") + 1], "opus")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
+        argv = agentcli.build_argv("codex", "/x/codex", "hi", "pymol", 1, model="gpt-5-codex", effort="low")
+        self.assertEqual(argv[argv.index("-m") + 1], "gpt-5-codex")
+        self.assertIn('model_reasoning_effort="low"', argv)
+        self.assertEqual(argv[1:3], ["exec", "--json"])
+        argv = agentcli.build_argv("codex", "/x/codex", "more", "pymol", 1, session_id="t1", model="o3")
+        self.assertEqual(argv[:3], ["/x/codex", "exec", "resume"])
+        self.assertEqual(argv[-2:], ["t1", "more"])
+        self.assertIn("o3", argv)
+
+    def test_settings_persist(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"MOLMCP_AGENT_SETTINGS": os.path.join(d, "s.json")}):
+            self.assertEqual(agentcli.backend_settings("claude"), {"model": "", "effort": ""})
+            agentcli.set_backend_settings("claude", model="sonnet")
+            agentcli.set_backend_settings("claude", effort="xhigh")
+            self.assertEqual(agentcli.backend_settings("claude"), {"model": "sonnet", "effort": "xhigh"})
+            agentcli.set_default_backend("codex")
+            self.assertEqual(agentcli.load_settings()["default_backend"], "codex")
+            with mock.patch.object(agentcli, "available_backends", return_value=["claude"]):
+                self.assertEqual(agentcli.default_backend(), "claude")   # codex not installed -> fall back
+            with mock.patch.object(agentcli, "available_backends", return_value=[]):
+                self.assertEqual(agentcli.default_backend(), "claude")

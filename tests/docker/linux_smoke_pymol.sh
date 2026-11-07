@@ -27,7 +27,7 @@ async def q():
     p = StdioServerParameters(command=os.path.abspath(".venv/bin/pymol-mcp"), args=[], env=dict(os.environ))
     async with stdio_client(p) as (r, w):
         async with ClientSession(r, w) as s:
-            await s.initialize(); print("quit:", text_of(await s.call_tool("quit_pymol", {}))[:60].replace("\n", " "))
+            await s.initialize(); print("quit:", text_of(await s.call_tool("quit_pymol", {"confirm": True}))[:60].replace("\n", " "))
 asyncio.run(q())
 PY
 sleep 2; echo "pymol processes left: $(ps aux | grep -c "[m]olmcp_pymol_headless" || true)"

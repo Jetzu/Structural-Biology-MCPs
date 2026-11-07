@@ -30,6 +30,6 @@ async def q():
     p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/pymol-mcp.exe"), args=[], env=dict(os.environ))
     async with stdio_client(p) as (r, w):
         async with ClientSession(r, w) as s:
-            await s.initialize(); print("quit:", text_of(await s.call_tool("quit_pymol", {}))[:60].replace("\n", " "))
+            await s.initialize(); print("quit:", text_of(await s.call_tool("quit_pymol", {"confirm": True}))[:60].replace("\n", " "))
 asyncio.run(q())
 PY

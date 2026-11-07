@@ -75,7 +75,7 @@ r = call("run", {"commands": ["turn y, 90"]}); r = call("render", {"width": 320,
 r = call("compare_renders", {}); print("compare ->", (r or {}).get("summary"), flush=True)
 r = call("layout", {"by": "object", "occlusion": True}); print("layout ->", (r or {}).get("layout", {}).get("summary"), "occlusion:", json.dumps((r or {}).get("occlusion"))[:160], flush=True)
 r = call("events", {}); print("events -> seq=%s kinds=%s" % ((r or {}).get("seq"), [e["kind"] for e in (r or {}).get("events", [])][-6:]), flush=True)
-r = call("quit_pymol", {}); print("quit ->", json.dumps(r)[:120], flush=True)
+r = call("quit_pymol", {"confirm": True}); print("quit ->", json.dumps(r)[:120], flush=True)
 time.sleep(1)
 print("server alive:", p.poll() is None, flush=True)
 print("--- server stderr (tail):"); print("\n".join(err_lines[-25:]), flush=True)

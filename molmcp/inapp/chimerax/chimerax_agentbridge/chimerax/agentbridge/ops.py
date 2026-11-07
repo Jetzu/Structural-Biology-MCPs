@@ -22,6 +22,37 @@ _handlers = []
 _history_log = None
 _last_fp = None
 _shutdown = False
+_window_active = None
+_focus_timer = None
+
+
+def _start_focus_poll(session):
+    global _focus_timer
+    if _focus_timer is not None or not is_gui(session):
+        return
+    try:
+        from Qt.QtCore import QTimer
+
+        def poll():
+            global _window_active
+            try:
+                _window_active = bool(session.ui.main_window.isActiveWindow())
+            except Exception:
+                _window_active = None
+        _focus_timer = QTimer()
+        _focus_timer.timeout.connect(poll)
+        _focus_timer.start(1000)
+    except Exception:
+        _focus_timer = None
+
+
+def set_name(session, name=""):
+    if _bridge is None:
+        session.logger.warning("molmcp agent bridge not running")
+        return None
+    n = _bridge.set_name(str(name))
+    session.logger.info("molmcp agent bridge: this window is now named %r" % n)
+    return n
 
 LEVEL_NAMES = {0: "info", 1: "warning", 2: "error", 3: "bug"}
 EVENT_TRIGGERS = ["command started", "command finished", "command failed", "add models", "remove models",
@@ -261,26 +292,45 @@ def op_ping(session, args):
     # runs on the bridge thread so that liveness checks never wait for a busy main thread
     out = {"app": "chimerax", "version": _version(), "pid": os.getpid(), "gui": is_gui(session),
            "events_seq": _bridge.events.seq if _bridge else 0, "cwd": os.getcwd(),
-           "main_thread_busy": not _lock.acquire(blocking=False)}
+           "main_thread_busy": not _lock.acquire(blocking=False),
+           "name": _bridge.name if _bridge else "", "last_activity": _bridge.last_activity if _bridge else None,
+           "window_active": _window_active}
     if not out["main_thread_busy"]:
         _lock.release()
     try:
         out["window"] = list(session.main_view.window_size)
-        out["n_models"] = len(session.models.list())
+        tops = [m for m in session.models.list() if m.parent is None or not m.parent.id]
+        out["n_models"] = len(tops)
+        out["models"] = ["#%s %s" % (m.id_string, m.name) for m in tops[:8]]
     except Exception:
         pass
     return out
 
 
-def _run_one(session, text, log):
+def _run_one(session, text, log, want_json=False):
     from chimerax.core.commands import run
     from chimerax.core.errors import UserError, NotABug
     cap = _make_capture_log()
     session.logger.add_log(cap)
     t0 = time.time()
-    ok, err, tb, value = True, None, None, None
+    ok, err, tb, value, json_value = True, None, None, None, None
     try:
-        value = run(session, text, log=log)
+        if want_json:
+            value = run(session, text, log=log, return_json=True)
+            try:
+                from chimerax.core.commands import JSONResult
+                vals = value if isinstance(value, list) else [value]
+                jv = [v.json_value for v in vals if isinstance(v, JSONResult)]
+                if jv:
+                    json_value = jv[0] if len(jv) == 1 else jv
+                    import json as _json
+                    json_value = _json.loads(json_value) if isinstance(json_value, str) else json_value
+                value = [v.python_value if isinstance(v, JSONResult) else v for v in vals]
+                value = value[0] if len(value) == 1 else value
+            except Exception:
+                pass
+        else:
+            value = run(session, text, log=log)
     except NotABug as e:          # UserError etc: user-facing message, no traceback
         ok, err = False, "%s: %s" % (type(e).__name__, e)
     except Exception as e:
@@ -298,8 +348,11 @@ def _run_one(session, text, log):
             continue
         t = "\n".join(lines)
         msgs.append(t if level == 0 else "%s: %s" % (LEVEL_NAMES.get(level, level).upper(), t))
-    return {"command": text, "ok": ok, "output": "\n".join(msgs), "error": err, "traceback": tb,
-            "value": _jsonable_value(value), "ms": round((time.time() - t0) * 1000, 1)}
+    out = {"command": text, "ok": ok, "output": "\n".join(msgs), "error": err, "traceback": tb,
+           "value": _jsonable_value(value), "ms": round((time.time() - t0) * 1000, 1)}
+    if json_value is not None:
+        out["json"] = json_value
+    return out
 
 
 def op_run(session, args):
@@ -309,11 +362,12 @@ def op_run(session, args):
     cmds = [c.strip() for c in (cmds or []) if c and c.strip()]
     log = bool(args.get("log", True))
     stop_on_error = bool(args.get("stop_on_error", True))
+    want_json = bool(args.get("json", False))
     global _last_fp
     before = fingerprint(session)
     results = []
     for c in cmds:
-        r = _run_one(session, c, log)
+        r = _run_one(session, c, log, want_json)
         results.append(r)
         if _bridge:
             _bridge.events.add("agent_command", command=c, ok=r["ok"])
@@ -957,16 +1011,22 @@ def op_help(session, args):
         text = usage(session, name, show_subcommands=20)
         return {"found": True, "command": name, "usage": _strip_html(text).replace("\xa0", " ")}
     except Exception as e:
-        from chimerax.core.commands import registered_commands
         import difflib
-        names = registered_commands(multiword=True)
+        names = _registered_commands()
         return {"found": False, "error": str(e), "suggestions": difflib.get_close_matches(name, names, n=8)}
 
 
+def _registered_commands():
+    try:
+        from chimerax.core.commands.cli import registered_commands
+    except ImportError:
+        from chimerax.core.commands import registered_commands
+    return list(registered_commands(multiword=True))
+
+
 def op_commands(session, args):
-    from chimerax.core.commands import registered_commands
     prefix = args.get("prefix", "")
-    names = sorted(n for n in registered_commands(multiword=True) if n.startswith(prefix))
+    names = sorted(n for n in _registered_commands() if n.startswith(prefix))
     return {"commands": names, "count": len(names)}
 
 
@@ -1049,6 +1109,7 @@ def _install_triggers(session):
         try:
             if name.startswith("command"):
                 _bridge.events.add(name.replace(" ", "_"), command=str(data)[:500])
+                _bridge.touch()
             elif name in ("add models", "remove models"):
                 _bridge.events.add(name.replace(" ", "_"), models=["#%s %s" % (m.id_string, m.name) for m in list(data)[:50]])
             else:
@@ -1082,6 +1143,10 @@ def start(session, port=None, quiet=False):
             _history_log = _make_history_log()
             session.logger.add_log(_history_log)
         _install_triggers(session)
+        try:
+            session.ui.thread_safe(_start_focus_poll, session)
+        except Exception:
+            pass
         try:
             _last_fp = fingerprint(session)
         except Exception:

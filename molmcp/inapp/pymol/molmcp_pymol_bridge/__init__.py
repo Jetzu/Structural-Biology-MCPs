@@ -29,6 +29,40 @@ _feedback = deque(maxlen=5000)       # (time, line) of everything PyMOL printed
 _last_fp = None                      # fingerprint used by the events op
 _orig_get_feedback = None
 _shutdown = False
+_window_active = None
+_focus_timer = None
+
+
+def _start_focus_poll():
+    """GUI only: poll whether this PyMOL window has keyboard focus (used to pick the right window)."""
+    global _focus_timer
+    if _focus_timer is not None or not is_gui():
+        return
+    try:
+        from pymol.Qt import QtCore
+
+        def poll():
+            global _window_active
+            try:
+                w = _qtwindow()
+                _window_active = bool(w is not None and w.isActiveWindow())
+            except Exception:
+                _window_active = None
+        _focus_timer = QtCore.QTimer()
+        _focus_timer.timeout.connect(poll)
+        _focus_timer.start(1000)
+    except Exception:
+        _focus_timer = None
+
+
+def set_name(name=""):
+    """`agent_name <name>`: label this window so an agent can pick it (shows in the MCP status tool)."""
+    if _bridge is None:
+        _log(" Agent bridge not running")
+        return None
+    n = _bridge.set_name(str(name))
+    _log(" Agent bridge: this window is now named %r" % n)
+    return n
 
 REP_NAMES = {0: "sticks", 1: "spheres", 2: "surface", 3: "labels", 4: "nb_spheres", 5: "cartoon",
              6: "ribbon", 7: "lines", 8: "mesh", 9: "dots", 10: "dashes", 11: "nonbonded", 12: "cell",
@@ -123,6 +157,8 @@ def _install_feedback_tee():
             for line in lines:
                 line = _strip_ansi(line)
                 _feedback.append((now, line))
+                if _bridge is not None and line.startswith("PyMOL>"):
+                    _bridge.touch()
                 if _bridge is not None and (line.startswith("PyMOL>") or line.startswith("Error") or " Error" in line or line.startswith("Traceback")):
                     _bridge.events.add("log", text=line)
         return lines
@@ -333,10 +369,14 @@ def op_ping(args):
     if not busy:
         _lock.release()
     out = {"app": "pymol", "version": version, "pid": os.getpid(), "gui": is_gui(),
-           "events_seq": _bridge.events.seq if _bridge else 0, "cwd": os.getcwd(), "main_thread_busy": busy}
+           "events_seq": _bridge.events.seq if _bridge else 0, "cwd": os.getcwd(), "main_thread_busy": busy,
+           "name": _bridge.name if _bridge else "", "last_activity": _bridge.last_activity if _bridge else None,
+           "window_active": _window_active}
     try:
         out["viewport"] = list(cmd.get_viewport())
-        out["n_objects"] = len(cmd.get_names("objects"))
+        names = cmd.get_names("public_objects")
+        out["n_objects"] = len(names)
+        out["objects"] = names[:8]
     except Exception:
         pass
     return out
@@ -1004,6 +1044,10 @@ def start(port=None, quiet=0):
             version = "?"
         _bridge = Bridge("pymol", version, dispatch, info=_info, port=int(port) if port else None, log=_log)
         _bridge.start()
+        try:
+            on_main(_start_focus_poll)
+        except Exception:
+            pass
         global _last_fp
         try:
             _last_fp = on_main(fingerprint)
@@ -1041,6 +1085,7 @@ def _register_commands():
     cmd.extend("agent_stop", stop)
     cmd.extend("agent_status", status)
     cmd.extend("agent_info", status)
+    cmd.extend("agent_name", set_name)
     try:
         from . import chatpanel
         chatpanel.register_commands(cmd)
@@ -1067,9 +1112,24 @@ def _show_chat():
     return chatpanel.show_panel()
 
 
+def _install_toolbar_button():
+    try:
+        from . import chatpanel
+        if chatpanel.add_toolbar_button() is None:
+            # the Qt window may not exist yet while plugins initialise; retry shortly on the GUI thread
+            try:
+                from pymol.Qt import QtCore
+                QtCore.QTimer.singleShot(1500, lambda: chatpanel.add_toolbar_button())
+            except Exception:
+                pass
+    except Exception as e:
+        _log(" Agent toolbar button unavailable: %s" % e)
+
+
 def __init_plugin__(app=None):
     _register_commands()
     _register_menu()
+    _install_toolbar_button()
     if os.environ.get("MOLMCP_PYMOL_AUTOSTART", "1") != "0":
         try:
             start(quiet=1)

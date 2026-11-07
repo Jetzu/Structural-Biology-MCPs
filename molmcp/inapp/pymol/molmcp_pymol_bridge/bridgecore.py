@@ -228,6 +228,9 @@ class Bridge:
         self._thread = None
         self._log = log or (lambda msg: None)
         self.instance_file = None
+        self.name = os.environ.get("MOLMCP_%s_NAME" % app.upper(), "")
+        self.last_activity = time.time()      # last user/agent interaction (updated by the app module)
+        self.window_active = None             # whether the app window has focus (updated by the app module)
 
     # -- lifecycle -------------------------------------------------------
     @property
@@ -275,7 +278,18 @@ class Bridge:
         self._log("molmcp bridge for %s stopped" % self.app)
 
     def dispatch(self, op: str, args: dict):
+        if op not in ("ping", "log", "events"):
+            self.last_activity = time.time()
         return self._dispatcher(op, args)
+
+    def set_name(self, name: str):
+        self.name = (name or "").strip()
+        if self.running:
+            self._write_instance_file()
+        return self.name
+
+    def touch(self):
+        self.last_activity = time.time()
 
     # -- discovery file --------------------------------------------------
     def connection_info(self) -> dict:
@@ -292,6 +306,7 @@ class Bridge:
             "executable": sys.executable,
             "cwd": os.getcwd(),
             "hostname": socket.gethostname(),
+            "name": self.name,
         }
         try:
             info.update(self._info() or {})

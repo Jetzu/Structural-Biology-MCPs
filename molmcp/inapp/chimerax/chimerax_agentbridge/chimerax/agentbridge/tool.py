@@ -85,6 +85,6 @@ class AgentChatTool(ToolInstance):
         self.chat = agentchat_ui.make_chat_widget(
             QtWidgets, QtCore, QtGui, app="chimerax", pid=os.getpid(),
             start_run=lambda backend, prompt, cb: start_run(session, backend, prompt, cb),
-            sessions=_sessions, cwd=os.getcwd(), find_backend=agentcli.find_backend, title="Agent Chat for ChimeraX")
+            sessions=_sessions, cwd=os.getcwd(), find_backend=agentcli.find_backend, title="Agent Chat for ChimeraX", agentcli=agentcli)
         lay.addWidget(self.chat)
         self.tool_window.manage("side")

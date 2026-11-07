@@ -5,6 +5,7 @@ import base64
 import datetime as _dt
 import json
 import os
+import re
 import sys
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -110,14 +111,42 @@ class AppSession:
 # tool bodies (return JSON strings or [str, Image])
 # ---------------------------------------------------------------------------
 
+def _instance_summary(d: dict) -> dict:
+    items = d.get("objects") or d.get("models") or []
+    return {
+        "pid": d.get("pid"), "name": d.get("name") or "", "items": items,
+        "window_active": d.get("window_active"), "gui": d.get("gui"),
+        "last_activity": _dt.datetime.fromtimestamp(d["last_activity"]).strftime("%H:%M:%S") if d.get("last_activity") else None,
+        "started": _dt.datetime.fromtimestamp(d.get("started") or 0).strftime("%H:%M:%S"),
+        "cwd": d.get("cwd"),
+    }
+
+
+def instance_note(sess: AppSession) -> Optional[str]:
+    """One line naming the window acted on, only when several windows are open (added to tool responses)."""
+    try:
+        files = discovery.list_instances(sess.app)
+    except Exception:
+        return None
+    if len(files) < 2 or not sess.client.info:
+        return None
+    pid = sess.client.info.get("pid")
+    try:
+        ident = sess.client.call("ping", timeout=5)
+    except Exception:
+        ident = {}
+    items = ident.get("objects") or ident.get("models") or []
+    name = ident.get("name") or ""
+    return "%s window pid %s%s · %s (%d windows open; use `connect` to switch)" % (
+        sess.app, pid, (" '%s'" % name) if name else "", ", ".join(items[:5]) or "empty", len(files))
+
+
 def status(sess: AppSession) -> str:
-    instances = discovery.list_instances(sess.app)
+    instances = sess.client.describe_instances()
     out: Dict[str, Any] = {
         "app": sess.app,
         "executable": sess.exe_finder(),
-        "bridges_found": [{"pid": i.get("pid"), "port": i.get("port"), "version": i.get("app_version"),
-                           "gui": i.get("gui"), "started": _dt.datetime.fromtimestamp(i.get("started", 0)).isoformat(timespec="seconds"),
-                           "cwd": i.get("cwd")} for i in instances],
+        "windows": [_instance_summary(i) for i in instances],
         "connected": False,
         "renders_dir": renders_dir(),
     }
@@ -133,6 +162,11 @@ def status(sess: AppSession) -> str:
         except Exception as e:
             out["ping_error"] = str(e)
         out["client_stats"] = sess.client.stats
+        if len(instances) > 1:
+            out["hint"] = ("%d %s windows are open; connected to pid %s. Each window is a separate session. "
+                           "`connect(pid=...)` or `connect(name=...)` switches; the user can name a window with "
+                           "%s." % (len(instances), sess.app, info.get("pid"),
+                                    "`agent_name mywindow` in PyMOL" if sess.app == "pymol" else "`agent name mywindow` in ChimeraX"))
     else:
         out["hint"] = ("No running %s bridge found. Start %s with the molmcp bridge (it auto-starts when the plugin/bundle "
                        "is installed) or call the launch tool." % (sess.app, sess.app))
@@ -150,13 +184,18 @@ def launch(sess: AppSession, mode: str = "gui", wait_s: float = 120.0) -> str:
                   "version": inst.get("app_version"), "gui": inst.get("gui")})
 
 
-def connect(sess: AppSession, pid: Optional[int] = None, port: Optional[int] = None) -> str:
+def connect(sess: AppSession, pid: Optional[int] = None, port: Optional[int] = None, name: Optional[str] = None) -> str:
     try:
-        info = sess.client.connect(pid=pid, port=port)
+        info = sess.client.connect(pid=pid, port=port, name=name)
     except NotConnected as e:
-        return dumps({"ok": False, "error": str(e), "bridges_found": discovery.list_instances(sess.app)})
+        return dumps({"ok": False, "error": str(e), "windows": [_instance_summary(i) for i in sess.client.describe_instances()]})
     sess.events_seq = 0
-    return dumps({"ok": True, "pid": info.get("pid"), "port": info.get("port"), "gui": info.get("gui")})
+    try:
+        ident = sess.client.call("ping", timeout=5)
+    except Exception:
+        ident = {}
+    return dumps({"ok": True, "pid": info.get("pid"), "port": info.get("port"), "gui": info.get("gui"),
+                  "name": ident.get("name", ""), "items": ident.get("objects") or ident.get("models") or []})
 
 
 def _normalize_commands(commands) -> List[str]:
@@ -170,14 +209,30 @@ def _normalize_commands(commands) -> List[str]:
     return out
 
 
-def run(sess: AppSession, commands, stop_on_error: bool = True, timeout: float = 600.0) -> str:
+DANGEROUS = {
+    "pymol": re.compile(r"^\s*(quit|exit|reinitialize|system|pip|conda|cd|rm)\b", re.I),
+    "chimerax": re.compile(r"^\s*(exit|quit|close\s+session|pip\b|shell\b|system\b|remotecontrol\b)", re.I),
+}
+
+
+def run(sess: AppSession, commands, stop_on_error: bool = True, timeout: float = 600.0,
+        allow_dangerous: bool = False, extra: Optional[dict] = None) -> str:
     cmds = _normalize_commands(commands)
     if not cmds:
         return dumps({"error": "no commands given"})
+    pat = DANGEROUS.get(sess.app)
+    if pat and not allow_dangerous:
+        bad = [c for c in cmds if pat.match(c)]
+        if bad:
+            return dumps({"ok": False, "error": "refused without allow_dangerous=true: %s (these quit the program, reset the "
+                                               "session or run shell/package commands; confirm with the user first)" % bad})
     try:
-        r = sess.call("run", timeout=timeout, commands=cmds, stop_on_error=stop_on_error)
+        r = sess.call("run", timeout=timeout, commands=cmds, stop_on_error=stop_on_error, **(extra or {}))
     except (BridgeError, NotConnected) as e:
         return dumps({"ok": False, "error": str(e)})
+    note = instance_note(sess)
+    if note:
+        r["instance"] = note
     for res in r.get("results", []):
         res["output"] = _trim(res.get("output"))
         if res.get("traceback"):
@@ -214,6 +269,9 @@ def scene(sess: AppSession, detail: str = "summary", names: Optional[List[str]] 
     if "background" in r and "rgb" in r["background"]:
         r["background"].update(_named_color(r["background"]["rgb"]))
     sess.events_seq = max(sess.events_seq, int(r.get("events_seq", 0)))
+    note = instance_note(sess)
+    if note:
+        r = dict(instance=note, **r)
     return dumps(r)
 
 
@@ -327,6 +385,19 @@ def events(sess: AppSession, since: Optional[int], limit: int) -> str:
     sess.events_seq = int(r.get("seq", sess.events_seq))
     for e in r.get("events", []):
         e["t"] = _dt.datetime.fromtimestamp(e["t"]).strftime("%H:%M:%S.%f")[:-3]
+    note = instance_note(sess)
+    if note:
+        r["instance"] = note
+        try:
+            others = [i for i in sess.client.describe_instances() if i.get("pid") != sess.client.info.get("pid")]
+            active = [i for i in others if i.get("window_active")]
+            if active:
+                a = active[0]
+                r["note"] = "The user is currently working in another %s window: pid %s%s (%s). Call connect(pid=%s) to act there." % (
+                    sess.app, a.get("pid"), (" '%s'" % a["name"]) if a.get("name") else "",
+                    ", ".join((a.get("objects") or a.get("models") or [])[:5]) or "empty", a.get("pid"))
+        except Exception:
+            pass
     return dumps(r)
 
 
@@ -342,7 +413,9 @@ def log(sess: AppSession, n: int) -> str:
     return "\n".join(lines) if lines else "(log empty)"
 
 
-def quit_app(sess: AppSession) -> str:
+def quit_app(sess: AppSession, confirm: bool = False) -> str:
+    if not confirm:
+        return dumps({"ok": False, "error": "refused: pass confirm=true after the user agreed to close the program"})
     try:
         r = sess.call("quit", timeout=10)
     except (BridgeError, NotConnected) as e:
@@ -353,3 +426,73 @@ def quit_app(sess: AppSession) -> str:
 
 def inapp_path(*parts: str) -> str:
     return os.path.join(INAPP_DIR, *parts)
+
+
+# ---------------------------------------------------------------------------
+# skills
+# ---------------------------------------------------------------------------
+
+def skills_index(app: str) -> str:
+    from . import skills as sk
+    return sk.index_text(app)
+
+
+def skill_text(app: str, name: str) -> str:
+    from . import skills as sk
+    s = sk.get_skill(app, name)
+    if not s:
+        return dumps({"ok": False, "error": "no skill named %r" % name, "available": [x["name"] for x in sk.list_skills(app)]})
+    return "# %s\n(%s skill '%s'%s)\n\n%s" % (s["title"], s["app"], s["name"], "" if s["source"] == "builtin" else ", user file " + s["path"], s["body"])
+
+
+def save_skill(app: str, name: str, content: str) -> str:
+    from . import skills as sk
+    try:
+        path = sk.save_user_skill(app, name, content)
+    except Exception as e:
+        return dumps({"ok": False, "error": str(e)})
+    return dumps({"ok": True, "path": path, "note": "user skills override built-in ones with the same name"})
+
+
+def register_skill_extras(mcp, app: str):
+    """Expose skills also as MCP resources and prompts where the SDK supports it (tools always work)."""
+    from . import skills as sk
+    try:
+        @mcp.resource("molmcp://%s/skills" % app, name="%s skills index" % app, description="Index of the available skills")
+        def _skills_index() -> str:  # pragma: no cover - depends on SDK
+            return sk.index_text(app)
+
+        @mcp.resource("molmcp://%s/skills/{name}" % app, name="%s skill" % app, description="One skill by name")
+        def _skill(name: str) -> str:  # pragma: no cover
+            s = sk.get_skill(app, name)
+            return s["body"] if s else "no such skill"
+    except Exception:
+        pass
+    try:
+        @mcp.prompt(name="use_skill", description="Load a %s skill and follow it for the given task" % app)
+        def _use_skill(skill: str, task: str = "") -> str:  # pragma: no cover
+            s = sk.get_skill(app, skill)
+            body = s["body"] if s else "(skill %r not found; call the skills tool)" % skill
+            return "Follow these %s instructions:\n\n%s\n\nTask: %s" % (app, body, task or "as discussed")
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# structured convenience tools (run Python inside the app through the bridge)
+# ---------------------------------------------------------------------------
+
+def python_json(sess: AppSession, code: str, timeout: float = 600.0) -> str:
+    """Run code that assigns `result`; return its JSON (or the error)."""
+    try:
+        r = sess.call("python", timeout=timeout, code=code)
+    except (BridgeError, NotConnected) as e:
+        return dumps({"ok": False, "error": str(e)})
+    if not r.get("ok"):
+        return dumps({"ok": False, "error": r.get("error"), "traceback": _trim(r.get("traceback"), 2000), "stdout": _trim(r.get("stdout"), 2000)})
+    out = r.get("result")
+    if isinstance(out, dict):
+        out.setdefault("ok", True)
+        if r.get("changes"):
+            out["changes"] = r["changes"]
+    return dumps(out)

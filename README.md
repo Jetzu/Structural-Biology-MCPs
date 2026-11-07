@@ -15,18 +15,37 @@ runs *inside* the viewer (a PyMOL plugin / a ChimeraX bundle), so the agent gets
 * **In-tool integration** — the bridge auto-starts with the application; PyMOL gets `agent_status`,
   `agent_start`, `agent_stop` commands (and a Plugin-menu entry), ChimeraX gets `agent status|start|stop`.
   The MCP server can also launch the application itself (GUI or headless).
-* **Claude / Codex inside the app** — a Claude-Code-style chat panel (PyMOL: *Plugin ▸ Agent Chat*, or
-  `agent_chat`; ChimeraX: *Tools ▸ General ▸ Agent Chat*, or `agent chat`) and the commands `claude <text>` /
-  `codex <text>` run your installed Claude Code or Codex CLI non-interactively, with the app's MCP server pinned
-  to that very process.  The panel streams the agent's text, shows every tool call (`⏺ pymol/run(...)`) with a
-  collapsed result preview (`⎿`), an animated status line while it works, and the cost/tokens when done.
-  Slash commands: `/clear`, `/claude`, `/codex`, `/stop`, `/help`; Enter sends, Shift+Enter newline, Esc
-  interrupts, ↑/↓ recall prompts.  Conversations continue across turns per backend.
+* **Claude / Codex inside the app** — a Claude-Code-style chat panel, one click away: the **Agent** button next
+  to *Builder…* in PyMOL's top toolbar (also *Plugin ▸ Agent Chat* or `agent_chat`), and the **Agent** tab in
+  ChimeraX's toolbar (also *Tools ▸ General ▸ Agent Chat* or `agent chat`).  The commands `claude <text>` /
+  `codex <text>` work from both command lines.  The panel runs your installed Claude Code or Codex CLI with the
+  app's MCP server pinned to that very window, streams the agent's text, shows each tool call with the commands
+  or scripts it ran in a code window and a collapsed `⎿` result, and reports time, tokens and cost when done.
+  A **model switcher** (bottom right, or `/model`) chooses provider (Claude Code / Codex), model and effort,
+  exactly like `/model` in Claude Code; providers whose CLI is not installed are greyed out, so a Claude-only or
+  Codex-only setup just works.  Slash commands: `/model`, `/clear`, `/claude`, `/codex`, `/skills`, `/stop`,
+  `/help`; Enter sends, Shift+Enter newline, Esc interrupts, ↑/↓ history, Tab accepts a suggestion.
+* **Skills** — instruction files the agent reads on demand (`skills`, `skill`), covering publication rendering,
+  representations and colouring, selections / atom specs, surfaces and electrostatics, alignment, movies, maps and
+  cryo-EM, ligand sites, hydrogen bonds and contacts, AlphaFold, sessions and export.  Add your own recipes under
+  `~/.molmcp/skills/<app>/` (or let the agent store one with `save_skill`); user files override built-ins.
+* **Structured helpers** for the questions agents ask most: `measure` (distance/angle/dihedral/extent/RMSD/count/SASA),
+  `align` (RMSD and atom counts), `sequence`, `contacts` (residue pairs, polar-only option), `residue_table`
+  (per-residue secondary structure, B-factor/pLDDT, shown representations, colours), `save_file`.
+  Everything else in either program remains reachable through `run` (any command) and `python`; see
+  [docs/FEATURE_COVERAGE.md](docs/FEATURE_COVERAGE.md).
+* **Several windows** — every PyMOL/ChimeraX window is its own session with its own bridge.  `status` lists them
+  with their loaded objects, name and which one has focus; the server connects to the window you are working in
+  and names the window in every reply while more than one is open; `connect(pid=…)` / `connect(name=…)` switch.
+  Name a window with `agent_name mywork` (PyMOL) or `agent name mywork` (ChimeraX).
 
 Works on macOS, Linux and Windows.  Only the standard library plus numpy/Pillow (both shipped with the
 viewers) run inside the applications; the servers need Python ≥ 3.10.
 
 ## Install
+
+Step-by-step instructions for macOS, Linux and Windows, including Claude-only and Codex-only setups, are in
+[docs/SETUP.md](docs/SETUP.md).  The short version:
 
 ```bash
 git clone git@github.com:Jetzu/Structural-Biology-MCPs.git mol-mcp && cd mol-mcp   # or https://github.com/Jetzu/Structural-Biology-MCPs.git
@@ -70,7 +89,7 @@ or let the agent call `launch`.  Typical agent flow:
 | tool | purpose |
 |------|---------|
 | `status`, `launch`, `connect` | discover / start / pick a viewer process (several can run at once) |
-| `run` | execute viewer commands; per-command ok/output/error + scene changes |
+| `run` | execute viewer commands; per-command ok/output/error + scene changes (ChimeraX: `json=True` returns structured values); quitting/reset/shell commands need `allow_dangerous=True` |
 | `python` | run Python inside the viewer (`cmd`/`pymol` or `session`/`run`), return `result` |
 | `scene` | structured state snapshot (`detail="full"` adds per-chain details) |
 | `object_info` / `model_info` | everything about one object / model |
@@ -81,8 +100,10 @@ or let the agent call `launch`.  Typical agent flow:
 | `compare_renders`, `analyze_image` | diff two renders; analyse any PNG on disk |
 | `events`, `log` | activity since last call; viewer log |
 | `help`, `commands` | command documentation / list |
+| `skills`, `skill`, `save_skill` | instruction files for common jobs; add your own |
+| `measure`, `align`, `sequence`, `contacts`, `residue_table`, `save_file` | structured helpers with JSON results |
 | `settings` (PyMOL) | read settings, globally or per object |
-| `quit_pymol` / `quit_chimerax` | terminate the viewer |
+| `quit_pymol` / `quit_chimerax` | terminate the viewer (needs `confirm=True`) |
 
 ### Environment variables
 
@@ -99,10 +120,12 @@ or let the agent call `launch`.  Typical agent flow:
 ## Claude / Codex inside PyMOL and ChimeraX
 
 ```
+PyMOL>  agent_chat                (or click "Agent" next to "Builder..." in the top toolbar)
 PyMOL>  claude which chains are shown and how are they coloured?
 PyMOL>  codex colour all carbons magenta and zoom on the ligand
 ChimeraX: claude colour the ribbon of chain A hot pink
-ChimeraX: agent chat            (opens the panel; Enter sends, Shift+Enter = newline)
+ChimeraX: agent chat            (or the "Agent" toolbar tab; Enter sends, Shift+Enter = newline)
+          /model                (provider · model · effort; also the button at the bottom right)
 ```
 
 ```
@@ -149,9 +172,11 @@ Claude Code / Codex ──stdio──> pymol-mcp ──HTTP (127.0.0.1, token)�
 
 | | macOS (this build) | Linux (x86_64 container) | Windows |
 |---|---|---|---|
-| PyMOL GUI: run / scene / render / layout / events / compare | tested, PyMOL 3.1.5 | n/a (no display) | not tested |
-| PyMOL headless (library mode, ray renders) | tested | tested, open-source PyMOL 3.1 via conda-forge | not tested |
-| PyMOL plugin install through PyMOL's plugin prefs | tested | tested | not tested |
+| PyMOL GUI: run / scene / render / layout / events / compare | tested, PyMOL 3.1.5 | n/a (no display) | not tested (no Windows machine) |
+| PyMOL headless (library mode, ray renders) | tested | tested, open-source PyMOL 3.1 via conda-forge | tested under Wine: win32 Python 3.11 + PyMOL 3.2 wheel; server, tools list, headless launch, run/scene/render |
+| PyMOL plugin install through PyMOL's plugin prefs | tested | tested | tested under Wine (`%APPDATA%\pymol\startup`, PyMOL prefs updated) |
+| Installer: venv, `.exe` console scripts, Claude/Codex config files | tested | tested | tested under Wine (`.venv\Scripts\pymol-mcp.exe`, `C:\users\...\.claude.json`, `.codex\config.toml`) |
+| Unit + platform tests | pass (37) | pass | pass under Windows Python 3.11 (34 at the time, 1 skipped) |
 | ChimeraX GUI: run / scene / render / layout / events / compare | tested, ChimeraX 1.11.1 | n/a (no display) | not tested |
 | ChimeraX headless `--nogui --offscreen`: launch via MCP, run / scene / offscreen render / layout / events / compare | not possible on macOS (verified: "running without graphics") | tested as a normal user in UCSF's official `ucsfrbvi/chimerax` image (arm64, ChimeraX 1.13 dev) | not possible |
 | ChimeraX bundle install via `toolshed install` + autostart of the bridge + `agent`/`claude`/`codex` commands | tested | tested (same image; note: ChimeraX redirects root's data dir, so run as a normal user) | not tested |
@@ -161,10 +186,12 @@ Claude Code / Codex ──stdio──> pymol-mcp ──HTTP (127.0.0.1, token)�
 | In-app chat: PyMOL `claude`/`codex` commands and dock; ChimeraX `claude`/`codex` commands and tool panel, both backends changing the live scene | tested | not run | not tested |
 | Platform-simulation tests (`tests/test_platform.py`) | pass | pass | Windows branches exercised by simulation only |
 
-Windows support is implemented (path discovery for Schrodinger/conda PyMOL and ChimeraX, `.exe` console
-scripts, `%APPDATA%` plugin dir, detached process creation, Windows-safe pid checks, `ChimeraX-console.exe`
-for scripted/headless runs, `python.exe -m pymol -cq` for the headless plugin installer) but has not been run
-on a Windows machine.  Please report issues from the first Windows run.
+Windows was exercised with the real Windows build of CPython and the Windows PyMOL wheel running under Wine in a
+Linux container (`tests/docker/Dockerfile.windows-wine`): the `win32` code paths (path discovery, `.exe` console
+scripts, `%APPDATA%` plugin directory, Windows config paths, detached process creation) all ran.  Two things are
+not covered: a physical Windows machine (Wine's stdio pipe handling made the MCP SDK client disconnect after the
+server spawned PyMOL, which real Windows does not do), and ChimeraX on Windows.  Please report issues from the
+first run on a real Windows machine.
 
 ### Linux containers
 

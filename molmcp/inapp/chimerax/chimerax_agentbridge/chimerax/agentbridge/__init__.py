@@ -49,5 +49,17 @@ class _AgentBridgeAPI(BundleAPI):
         from . import tool
         return tool.get_tool(session, create=True)
 
+    @staticmethod
+    def run_provider(session, name, mgr, **kw):
+        # toolbar button ("Agent" tab) -> open / raise the chat panel
+        from . import tool
+        t = tool.get_tool(session, create=True)
+        if t is not None:
+            try:
+                t.tool_window.shown = True
+            except Exception:
+                pass
+        return t
+
 
 bundle_api = _AgentBridgeAPI()

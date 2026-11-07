@@ -34,20 +34,70 @@ class BridgeClient:
         self.stats = {"calls": 0, "errors": 0, "total_ms": 0.0}
 
     # -- connection management -------------------------------------------
-    def connect(self, info: Optional[dict] = None, pid: Optional[int] = None, port: Optional[int] = None) -> dict:
-        """Attach to a live bridge; picks the newest one when nothing is specified."""
+    def ping_info(self, info: dict, timeout: float = 2.0) -> Optional[dict]:
+        """Full /ping payload (identity: name, loaded objects, focus, last activity) or None if dead."""
+        try:
+            conn = http.client.HTTPConnection(info["host"], int(info["port"]), timeout=timeout)
+            conn.request("GET", "/ping")
+            resp = conn.getresponse()
+            data = json.loads(resp.read().decode("utf-8"))
+            conn.close()
+            if data.get("ok") and data.get("app") == self.app:
+                return data
+        except Exception:
+            pass
+        return None
+
+    def describe_instances(self) -> list:
+        """Live instances with identity, best first (focused window > most recently used > newest)."""
+        out = []
+        for c in discovery.list_instances(self.app):
+            d = self.ping_info(c)
+            if not d:
+                continue
+            ident = self.identify(c)
+            if ident:
+                d.update({k: v for k, v in ident.items() if v is not None})
+            d["port"] = c.get("port")
+            d["started"] = c.get("started")
+            d["name"] = d.get("name") or c.get("name") or ""
+            out.append(d)
+        out.sort(key=lambda d: (not bool(d.get("window_active")), -(d.get("last_activity") or 0), -(d.get("started") or 0)))
+        return out
+
+    def identify(self, info: dict) -> Optional[dict]:
+        """Ask the bridge for its identity through the authenticated channel (objects/models, name, focus)."""
+        try:
+            conn = http.client.HTTPConnection(info["host"], int(info["port"]), timeout=4)
+            body = json.dumps({"op": "ping", "args": {}}).encode("utf-8")
+            conn.request("POST", "/call", body=body, headers={"Content-Type": "application/json",
+                                                              "Authorization": "Bearer " + info["token"], "Content-Length": str(len(body))})
+            data = json.loads(conn.getresponse().read().decode("utf-8"))
+            conn.close()
+            return data.get("result") if data.get("ok") else None
+        except Exception:
+            return None
+
+    def connect(self, info: Optional[dict] = None, pid: Optional[int] = None, port: Optional[int] = None,
+                name: Optional[str] = None) -> dict:
+        """Attach to a live bridge. Preference when nothing is specified: the window that has focus, then the
+        most recently used one, then the newest."""
         if info is None:
-            candidates = discovery.list_instances(self.app)
+            candidates = self.describe_instances()
             if pid is not None:
                 candidates = [c for c in candidates if int(c.get("pid", 0)) == int(pid)]
             if port is not None:
                 candidates = [c for c in candidates if int(c.get("port", 0)) == int(port)]
+            if name:
+                candidates = [c for c in candidates if (c.get("name") or "").lower() == name.lower()]
             for c in candidates:
-                if self._ping(c):
-                    info = c
+                files = {int(i.get("pid", 0)): i for i in discovery.list_instances(self.app)}
+                f = files.get(int(c.get("pid", 0)))
+                if f and self._ping(f):
+                    info = f
                     break
             if info is None:
-                raise NotConnected("no running %s bridge found" % self.app)
+                raise NotConnected("no running %s bridge found%s" % (self.app, " matching the request" if (pid or port or name) else ""))
         with self._lock:
             self._close()
             self.info = info
