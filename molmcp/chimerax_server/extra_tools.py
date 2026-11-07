@@ -66,8 +66,19 @@ CX_MEASURE = r'''
 import numpy as np
 from chimerax.core.commands import atomspec
 kind = %(kind)r; specs = [x for x in [%(s1)r, %(s2)r, %(s3)r, %(s4)r] if x]
+need = {"distance": 2, "angle": 3, "dihedral": 4, "extent": 1, "center": 1, "rmsd": 2, "count": 1, "sasa": 1}
+if kind not in need:
+    raise ValueError("unknown kind %%r; use one of %%s" %% (kind, sorted(need)))
+if len(specs) < need[kind]:
+    raise ValueError("kind %%r needs %%d spec(s), got %%d" %% (kind, need[kind], len(specs)))
 def objs(spec):
-    return atomspec.AtomSpecArg.parse(spec, session)[0].evaluate(session)
+    parsed, text, rest = atomspec.AtomSpecArg.parse(spec, session)
+    if rest.strip():
+        raise ValueError("could not parse atom spec %%r (unparsed: %%r)" %% (spec, rest))
+    o = parsed.evaluate(session)
+    if o.num_atoms == 0 and kind not in ("count",):
+        raise ValueError("spec %%r matches no atoms" %% spec)
+    return o
 def one(spec):
     a = objs(spec).atoms
     if len(a) != 1:
@@ -95,13 +106,13 @@ elif kind == "sasa":
     from chimerax.core.commands import run as _run
     val = _run(session, "measure sasa " + specs[0], log=False)
     result = {"kind": kind, "value": round(float(val), 1) if val is not None else None, "unit": "A^2"}
-else:
-    raise ValueError("unknown kind " + kind)
 '''
 
 CX_ALIGN = r'''
 from chimerax.core.commands import run as _run
 method = %(method)r
+if method not in ("matchmaker", "align"):
+    raise ValueError("method must be matchmaker or align")
 if method == "align":
     r = _run(session, "align %(mobile)s to %(target)s", log=False)
     # returns (matched_atoms, matched_to_atoms, rmsd, full_rmsd, transform)
@@ -129,7 +140,12 @@ else:
 
 CX_SEQUENCE = r'''
 from chimerax.core.commands import atomspec
-o = atomspec.AtomSpecArg.parse(%(spec)r, session)[0].evaluate(session)
+_p, _t, _rest = atomspec.AtomSpecArg.parse(%(spec)r, session)
+if _rest.strip():
+    raise ValueError("could not parse atom spec %%r (unparsed: %%r)" %% (%(spec)r, _rest))
+o = _p.evaluate(session)
+if o.num_atoms == 0:
+    raise ValueError("spec %%r matches no atoms" %% %(spec)r)
 out = {"spec": %(spec)r, "chains": []}
 seen = set()
 for s in o.atoms.unique_structures:
@@ -190,8 +206,12 @@ result = {"path": os.path.abspath(p), "bytes": os.path.getsize(p) if os.path.exi
 CX_RESIDUE_TABLE = r'''
 import numpy as np
 from chimerax.core.commands import atomspec
-o = atomspec.AtomSpecArg.parse(%(spec)r, session)[0].evaluate(session)
-res = o.residues
+_p, _t, _rest = atomspec.AtomSpecArg.parse(%(spec)r, session)
+if _rest.strip():
+    raise ValueError("could not parse atom spec %%r (unparsed: %%r)" %% (%(spec)r, _rest))
+o = _p.evaluate(session)
+res = list(o.residues)
+res.sort(key=lambda r: (r.structure.id_string, r.chain_id, int(r.number), r.insertion_code or ""))
 rows = []
 ss_names = {0: "coil", 1: "helix", 2: "strand"}
 for r in res:
@@ -208,8 +228,11 @@ for r in res:
                  "ribbon_shown": bool(r.ribbon_display), "atoms_shown": int(atoms.displays.sum()), "atoms": int(len(atoms)),
                  "ribbon_rgb": [int(x) for x in r.ribbon_color[:3]], "atom_rgb": dom})
 total = len(rows)
-rows = rows[%(off)d:%(off)d + %(n)d]
-result = {"spec": %(spec)r, "total": total, "offset": %(off)d, "rows": rows}
+off, n = %(off)d, %(n)d
+if off < 0 or n < 1:
+    raise ValueError("offset must be >= 0 and max_rows >= 1")
+n = min(n, 2000)
+result = {"spec": %(spec)r, "total": total, "offset": off, "max_rows": n, "rows": rows[off:off + n], "truncated": off + n < total}
 '''
 
 
@@ -223,11 +246,12 @@ def register_more(mcp, SESSION):
         return sc.python_json(SESSION, CX_SET_VIEW % dict(m=matrix_3x4, nv=named_view, fov=field_of_view))
 
     @mcp.tool()
-    def mutate(spec: str, residue: str, criteria: str = "d", preserve: bool = True) -> str:
-        """Point mutation with ChimeraX `swapaa` (rotamer library + criteria: "d" density/clash default,
-        "c" clashes, "h" H-bonds, "p" probability). `spec` must match exactly one residue (e.g. "#1/A:48");
-        `residue` three-letter code. Returns the new residue, rotamer info and clashes with neighbours."""
-        return sc.python_json(SESSION, CX_MUTATE % dict(spec=spec, res=residue.upper(), crit=criteria, preserve=bool(preserve)))
+    def mutate(spec: str, residue: str, criteria: str = "d", preserve: Optional[float] = None) -> str:
+        """Point mutation with ChimeraX `swapaa` (rotamer library + criteria letters: "d" density, "c" clashes,
+        "h" H-bonds, "p" probability; combine e.g. "cp"). `spec` must match exactly one residue (e.g. "#1/A:48");
+        `residue` three-letter code. `preserve` (0-1) keeps rotamers whose chi angles stay within that fraction of
+        the current ones (ChimeraX's own `preserve` number). Returns the new residue and clashes with neighbours."""
+        return sc.python_json(SESSION, CX_MUTATE % dict(spec=spec, res=residue.upper(), crit=criteria, preserve=preserve))
 
     @mcp.tool()
     def alignment_info(mobile: str, target: str, max_pairs: int = 400) -> str:
@@ -264,13 +288,22 @@ result = {"position": [round(float(x), 3) for x in c.position.origin()], "matrix
 CX_MUTATE = r'''
 from chimerax.core.commands import run as _run, atomspec
 spec, res, crit, preserve = %(spec)r, %(res)r, %(crit)r, %(preserve)r
-o = atomspec.AtomSpecArg.parse(spec, session)[0].evaluate(session)
+AA = {"ALA","ARG","ASN","ASP","CYS","GLN","GLU","GLY","HIS","ILE","LEU","LYS","MET","PHE","PRO","SER","THR","TRP","TYR","VAL"}
+if res not in AA:
+    raise ValueError("residue must be a three-letter amino-acid code, got %%r" %% res)
+_p, _t, _rest = atomspec.AtomSpecArg.parse(spec, session)
+if _rest.strip():
+    raise ValueError("could not parse atom spec %%r (unparsed: %%r)" %% (spec, _rest))
+o = _p.evaluate(session)
 rs = o.residues
 if len(rs) != 1:
     raise ValueError("spec must match exactly one residue, matched %%d" %% len(rs))
 r0 = rs[0]
 before = "%%s %%s" %% (r0.name, r0.number)
-_run(session, "swapaa %%s %%s criteria %%s preserve %%s" %% (spec, res, crit, "true" if preserve else "false"), log=False)
+cmdtext = "swapaa %%s %%s criteria %%s" %% (spec, res, crit)
+if preserve is not None and preserve is not False and preserve is not True:
+    cmdtext += " preserve %%s" %% preserve
+_run(session, cmdtext, log=False)
 o2 = atomspec.AtomSpecArg.parse(spec, session)[0].evaluate(session)
 r1 = o2.residues[0]
 clash_count = None
@@ -279,6 +312,11 @@ try:
     clash_count = int(sum(len(x) for x in v.values())) if isinstance(v, dict) else None
 except Exception:
     pass
+finally:
+    try:
+        _run(session, "~clashes", log=False)   # do not leave a 'clashes' pseudobond model behind
+    except Exception:
+        pass
 result = {"spec": spec, "from": before, "to": "%%s %%s" %% (r1.name, r1.number), "atoms_now": int(len(r1.atoms)), "criteria": crit, "clashing_atom_pairs": clash_count}
 '''
 

@@ -30,8 +30,10 @@ runs *inside* the viewer (a PyMOL plugin / a ChimeraX bundle), so the agent gets
   cryo-EM, ligand sites, hydrogen bonds and contacts, AlphaFold, sessions and export.  Add your own recipes under
   `~/.molmcp/skills/<app>/` (or let the agent store one with `save_skill`); user files override built-ins.
 * **Structured helpers** for the questions agents ask most: `measure` (distance/angle/dihedral/extent/RMSD/count/SASA),
-  `align` (RMSD and atom counts), `sequence`, `contacts` (residue pairs, polar-only option), `residue_table`
-  (per-residue secondary structure, B-factor/pLDDT, shown representations, colours), `save_file`.
+  `align` + `alignment_info` (RMSD, atom counts and the residue pairs behind them), `sequence`, `contacts` (residue
+  pairs, polar-only option), `residue_table` (per-residue secondary structure, B-factor/pLDDT, shown
+  representations, colours), `mutate` (rotamer-aware point mutations), `map_info`/`set_isolevel` (PyMOL density
+  levels), `set_setting`, `set_view` and `wait_for_jobs` (ChimeraX), `save_file`.
   Everything else in either program remains reachable through `run` (any command) and `python`; see
   [docs/FEATURE_COVERAGE.md](docs/FEATURE_COVERAGE.md).
 * **Several windows** — every PyMOL/ChimeraX window is its own session with its own bridge.  `status` lists them
@@ -101,7 +103,8 @@ or let the agent call `launch`.  Typical agent flow:
 | `events`, `log` | activity since last call; viewer log |
 | `help`, `commands` | command documentation / list |
 | `skills`, `skill`, `save_skill` | instruction files for common jobs; add your own |
-| `measure`, `align`, `sequence`, `contacts`, `residue_table`, `save_file` | structured helpers with JSON results |
+| `measure`, `align`, `alignment_info`, `sequence`, `contacts`, `residue_table`, `mutate`, `save_file` | structured helpers with JSON results |
+| `map_info`, `set_isolevel`, `set_setting` (PyMOL); `set_view`, `wait_for_jobs` (ChimeraX) | density levels, settings writes, camera round-trips, background jobs |
 | `settings` (PyMOL) | read settings, globally or per object |
 | `quit_pymol` / `quit_chimerax` | terminate the viewer (needs `confirm=True`) |
 

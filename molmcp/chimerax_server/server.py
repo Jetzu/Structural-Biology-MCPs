@@ -91,7 +91,7 @@ def run(commands: Union[str, List[str]], stop_on_error: bool = True, allow_dange
     `json` value for commands that provide one (info, measure, hbonds ... in ChimeraX 1.4+). Commands that quit,
     reset the session or run shell/package managers are refused unless allow_dangerous=True (ask the user first).
     """
-    return sc.run(SESSION, commands, stop_on_error, allow_dangerous, {"json": json} if json else None)
+    return sc.run(SESSION, commands, stop_on_error=stop_on_error, allow_dangerous=allow_dangerous, extra={"json": True} if json else None)
 
 
 @mcp.tool()

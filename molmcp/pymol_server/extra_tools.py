@@ -69,6 +69,20 @@ def register(mcp, SESSION):
 
 PYMOL_MEASURE = r'''
 kind = %(kind)r; sels = [x for x in [%(s1)r, %(s2)r, %(s3)r, %(s4)r] if x]
+need = {"distance": 2, "angle": 3, "dihedral": 4, "extent": 1, "center": 1, "rmsd": 2, "count": 1, "sasa": 1}
+if kind not in need:
+    raise ValueError("unknown kind %%r; use one of %%s" %% (kind, sorted(need)))
+if len(sels) < need[kind]:
+    raise ValueError("kind %%r needs %%d selection(s), got %%d" %% (kind, need[kind], len(sels)))
+for s_ in sels[:need[kind]]:
+    if cmd.count_atoms(s_) == 0:
+        raise ValueError("selection %%r matches no atoms" %% s_)
+if kind in ("distance", "angle", "dihedral"):
+    for s_ in sels[:need[kind]]:
+        if cmd.count_atoms(s_) != 1:
+            raise ValueError("selection %%r must match exactly one atom for kind %%r (matches %%d)" %% (s_, kind, cmd.count_atoms(s_)))
+if kind == "rmsd" and cmd.count_atoms(sels[0]) != cmd.count_atoms(sels[1]):
+    raise ValueError("rmsd needs equal atom counts: %%d vs %%d" %% (cmd.count_atoms(sels[0]), cmd.count_atoms(sels[1])))
 if kind == "distance":
     result = {"kind": kind, "value": round(cmd.get_distance(sels[0], sels[1]), 3), "unit": "A"}
 elif kind == "angle":
@@ -91,8 +105,6 @@ elif kind == "sasa":
     finally:
         cmd.set("dot_solvent", old)
     result = {"kind": kind, "value": round(float(area), 1), "unit": "A^2", "note": "solvent-accessible area via get_area with dot_solvent=1"}
-else:
-    raise ValueError("unknown kind " + kind)
 name = %(name)r
 if name and kind in ("distance", "angle", "dihedral"):
     getattr(cmd, kind)(name, *sels)
@@ -101,6 +113,11 @@ if name and kind in ("distance", "angle", "dihedral"):
 
 PYMOL_ALIGN = r'''
 method = %(method)r
+if method not in ("align", "super", "cealign", "pair_fit"):
+    raise ValueError("method must be align, super, cealign or pair_fit")
+for s_ in (%(mobile)r, %(target)r):
+    if cmd.count_atoms(s_) == 0:
+        raise ValueError("selection %%r matches no atoms" %% s_)
 if method == "cealign":
     r = cmd.cealign(%(target)r, %(mobile)r, object=%(obj)r)
     result = {"method": method, "rmsd": round(r.get("RMSD", 0), 3), "aligned_atoms": r.get("alignment_length")}
@@ -115,6 +132,8 @@ else:
 
 PYMOL_SEQUENCE = r'''
 sel = %(sel)r
+if cmd.count_atoms(sel) == 0:
+    raise ValueError("selection %%r matches no atoms" %% sel)
 out = {"selection": sel, "chains": []}
 for obj in (cmd.get_object_list("(" + sel + ")") or []):
     for ch in cmd.get_chains("(" + sel + ") and %%" + obj):
@@ -183,7 +202,11 @@ for d in acc.values():
                  "b_mean": round(sum(d["b"]) / len(d["b"]), 2), "atoms": d["atoms"],
                  "reps_shown": [REP[i] for i in REP if d["reps"] & (1 << i)], "color": cname, "rgb": rgb})
 total = len(rows)
-result = {"selection": %(sel)r, "total": total, "offset": %(off)d, "rows": rows[%(off)d:%(off)d + %(n)d]}
+off, n = %(off)d, %(n)d
+if off < 0 or n < 1:
+    raise ValueError("offset must be >= 0 and max_rows >= 1")
+n = min(n, 2000)
+result = {"selection": %(sel)r, "total": total, "offset": off, "max_rows": n, "rows": rows[off:off + n], "truncated": off + n < total}
 '''
 
 
@@ -200,8 +223,8 @@ def register_more(mcp, SESSION):
 
     @mcp.tool()
     def map_info(name: Optional[str] = None) -> str:
-        """Density maps and their isosurfaces: for every map object the grid size, min/max/mean/sd, and for every
-        mesh/surface object derived from it the isolevel (and the map it was carved from, if known)."""
+        """Density maps and their isosurfaces: for every map object the grid size and min/max/mean/sd; for every
+        mesh/surface/volume object its current isolevel. Use set_isolevel to change a level."""
         return sc.python_json(SESSION, PYMOL_MAP_INFO % dict(name=name))
 
     @mcp.tool()
@@ -224,6 +247,11 @@ def register_more(mcp, SESSION):
 
 PYMOL_MUTATE = r'''
 sel, res, rot, keep = %(sel)r, %(res)r, %(rot)d, %(keep)r
+AA = {"ALA","ARG","ASN","ASP","CYS","GLN","GLU","GLY","HIS","ILE","LEU","LYS","MET","PHE","PRO","SER","THR","TRP","TYR","VAL","HID","HIE","HIP"}
+if res not in AA:
+    raise ValueError("residue must be a three-letter amino-acid code, got %%r" %% res)
+if rot < 0:
+    raise ValueError("rotamer must be >= 0")
 ids = set(); cmd.iterate(sel, "_i.add((model, chain, resi))", space={"_i": ids})
 if len(ids) != 1:
     raise ValueError("selection must match exactly one residue, matched %%d: %%s" %% (len(ids), sorted(ids)[:5]))
@@ -232,22 +260,30 @@ if keep:
     cmd.create(keep, model)
 before = []
 cmd.iterate(sel, "_b.append(resn)", space={"_b": before})
+view0 = cmd.get_view()
 cmd.wizard("mutagenesis"); cmd.do("refresh_wizard")
 w = cmd.get_wizard()
 w.set_mode(res)
 w.do_select("/%%s//%%s/%%s/" %% (model, chain, resi))
 scores = [float(x) for x in getattr(w, "bump_scores", []) or []]
 n_rot = cmd.count_states("mutation") if "mutation" in cmd.get_names("all") else len(scores)
+if rot > max(n_rot, 1):
+    cmd.set_wizard()
+    raise ValueError("rotamer %%d out of range (1-%%d)" %% (rot, max(n_rot, 1)))
 chosen = rot if rot > 0 else ((scores.index(min(scores)) + 1) if scores else 1)
 cmd.frame(chosen)
 w.apply()
 cmd.set_wizard()
+cmd.set_view(view0)
 after = []
-cmd.iterate(sel, "_a.append(resn)", space={"_a": after})
-close = cmd.find_pairs("(%%s) and not hydro" %% sel, "(%%s) and not hydro and not (%%s)" %% (model, sel), cutoff=2.5)
+cmd.iterate("/%%s//%%s/%%s/" %% (model, chain, resi), "_a.append(resn)", space={"_a": after})
+mut = "/%%s//%%s/%%s/" %% (model, chain, resi)
+others = "(%%s) and not hydro and not (byres (%%s)) and not ((neighbor (%%s)) extend 2)" %% (model, mut, mut)
+close = cmd.find_pairs("(%%s) and not hydro and not name N+C+O+CA" %% mut, others, cutoff=2.5)
 result = {"object": model, "chain": chain, "resi": resi, "from": before[0] if before else None, "to": after[0] if after else None,
           "rotamers": n_rot, "chosen_rotamer": chosen, "bump_scores": [round(s, 2) for s in scores][:20],
-          "heavy_atom_contacts_below_2.5A": len(close), "kept_original_as": keep}
+          "heavy_atom_contacts_below_2.5A": len(close), "kept_original_as": keep,
+          "note": "the camera was not moved; side-chain contacts exclude bonded/adjacent backbone atoms"}
 '''
 
 PYMOL_MAP_INFO = r'''
@@ -265,6 +301,11 @@ for o in cmd.get_names("public_objects"):
         except Exception as e:
             d["error"] = str(e)
         try:
+            f = cmd.get_volume_field(o, copy=0)
+            d["grid_size"] = [int(x) for x in f.shape]
+        except Exception:
+            pass
+        try:
             ext = cmd.get_extent(o); d["extent"] = [[round(x, 1) for x in ext[0]], [round(x, 1) for x in ext[1]]]
         except Exception:
             pass
@@ -281,6 +322,8 @@ result = out
 
 PYMOL_ALIGNMENT_INFO = r'''
 aln, n = %(aln)r, %(n)d
+if aln not in cmd.get_names("all"):
+    raise ValueError("no alignment object %%r; run align/super/cealign with object_name first" %% aln)
 raw = cmd.get_raw_alignment(aln)
 info = {}
 objs = set()
@@ -289,7 +332,7 @@ for pair in raw:
         objs.add(model)
 for m in objs:
     cmd.iterate("%%" + m, "_d[(model, index)] = (chain, resn, resi, name)", space={"_d": info})
-pairs = []
+seen = {}
 for pair in raw:
     if len(pair) < 2:
         continue
@@ -297,12 +340,16 @@ for pair in raw:
     a, b = info.get((m1, i1)), info.get((m2, i2))
     if not a or not b:
         continue
+    key = ("%%s/%%s/%%s%%s" %% (m1, a[0], a[1], a[2]), "%%s/%%s/%%s%%s" %% (m2, b[0], b[1], b[2]))
+    if key in seen and a[3] != "CA":
+        continue
     try:
         d = cmd.get_distance("%%s and index %%d" %% (m1, i1), "%%s and index %%d" %% (m2, i2))
     except Exception:
         d = None
-    pairs.append({"a": "%%s/%%s/%%s%%s" %% (m1, a[0], a[1], a[2]), "b": "%%s/%%s/%%s%%s" %% (m2, b[0], b[1], b[2]), "distance": round(d, 2) if d is not None else None})
-result = {"alignment": aln, "objects": sorted(objs), "pairs_total": len(pairs), "pairs": pairs[:n],
+    seen[key] = {"a": key[0], "b": key[1], "atom": a[3], "distance": round(d, 2) if d is not None else None}
+pairs = list(seen.values())
+result = {"alignment": aln, "objects": sorted(objs), "residue_pairs_total": len(pairs), "pairs": pairs[:n],
           "worst_pairs": sorted([p for p in pairs if p["distance"] is not None], key=lambda p: -p["distance"])[:10]}
 '''
 
@@ -320,5 +367,18 @@ try:
     new = cmd.get_setting_tuple(name, sel)[1] if sel else cmd.get_setting_tuple(name)[1]
 except Exception:
     new = None
-result = {"setting": name, "selection": sel, "old": old, "new": new}
+def _dec(v):
+    if isinstance(v, (list, tuple)) and len(v) == 1:
+        v = v[0]
+    if (name.endswith("color") or name == "bg_rgb") and isinstance(v, int):
+        if v >= 0x40000000:
+            return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+        if v >= 0:
+            t = cmd.get_color_tuple(v)
+            return [int(round(x * 255)) for x in t] if t else v
+        return "default"
+    return v
+if old is None and new is None:
+    raise ValueError("unknown setting %%r" %% name)
+result = {"setting": name, "selection": sel, "old": _dec(old), "new": _dec(new)}
 '''

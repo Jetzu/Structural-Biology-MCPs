@@ -14,7 +14,10 @@ launched, so GUI-specific statements come from reading the source and the shippe
 > (`commands`/`help` import, `align` tuple handling, `run(json=True)` for structured ChimeraX output, a dangerous-command
 > guard in `run` plus `confirm=True` on the `quit_*` tools), the three missing skills exist (PyMOL `alphafold-plddt`
 > and `mutagenesis`, ChimeraX `ligand-binding-site`), all 27 skill bodies were reviewed against the installed
-> programs, and `residue_table` (section 8, item 4) is implemented for both apps.
+> programs, and `residue_table` (section 8, item 4) is implemented for both apps.  Second pass: items 5 (`mutate`,
+> both apps), 7 (`map_info`, `set_isolevel`), 8 (`wait_for_jobs`), 9 (ChimeraX `set_view`) and 10 (`alignment_info`,
+> both apps) are implemented too, plus PyMOL `measure(kind="sasa")`, `set_setting`, and one MCP prompt per skill
+> (`/mcp__pymol__publication_rendering` style in Claude Code).
 
 ## 1. Short answer
 

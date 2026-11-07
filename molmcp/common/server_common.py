@@ -61,14 +61,22 @@ class AppSession:
     # -- connection -----------------------------------------------------------
     def connect(self, auto_launch: bool = True, mode: str = "gui") -> dict:
         pinned = os.environ.get("MOLMCP_%s_PID" % self.app.upper())
-        if pinned and (self.client.info is None or str(self.client.info.get("pid")) != pinned):
+        if pinned:
+            if self.client.info is not None and str(self.client.info.get("pid")) == pinned:
+                return self.client.info
             try:
                 return self.client.connect(pid=int(pinned))
             except (NotConnected, ValueError):
-                pass   # pinned instance gone: fall back to discovery
+                raise NotConnected("the %s window this chat is bound to (pid %s) is no longer running or not responding; "
+                                   "restart the chat from a live window" % (self.app, pinned))
         try:
             return self.client.ensure()
         except NotConnected:
+            files = discovery.list_instances(self.app)
+            if files:
+                # bridges exist but none answered: busy (long command, modal dialog) - never start another window
+                raise NotConnected("%d %s window(s) are running but none answered the bridge ping (busy or showing a dialog); "
+                                   "retry in a moment or call `status`" % (len(files), self.app))
             if auto_launch and os.environ.get("MOLMCP_AUTOLAUNCH", "1") != "0":
                 return self.launch(mode)
             raise
@@ -114,7 +122,7 @@ class AppSession:
 def _instance_summary(d: dict) -> dict:
     items = d.get("objects") or d.get("models") or []
     return {
-        "pid": d.get("pid"), "name": d.get("name") or "", "items": items,
+        "pid": d.get("pid"), "name": d.get("name") or "", "items": items, "responsive": d.get("responsive", True),
         "window_active": d.get("window_active"), "gui": d.get("gui"),
         "last_activity": _dt.datetime.fromtimestamp(d["last_activity"]).strftime("%H:%M:%S") if d.get("last_activity") else None,
         "started": _dt.datetime.fromtimestamp(d.get("started") or 0).strftime("%H:%M:%S"),
@@ -143,6 +151,11 @@ def instance_note(sess: AppSession) -> Optional[str]:
 
 def status(sess: AppSession) -> str:
     instances = sess.client.describe_instances()
+    responsive = {int(i.get("pid", 0)) for i in instances}
+    for f in discovery.list_instances(sess.app):
+        if int(f.get("pid", 0)) not in responsive:
+            instances.append({"pid": f.get("pid"), "name": f.get("name", ""), "started": f.get("started"), "cwd": f.get("cwd"),
+                              "gui": f.get("gui"), "responsive": False, "window_active": None, "last_activity": None})
     out: Dict[str, Any] = {
         "app": sess.app,
         "executable": sess.exe_finder(),
@@ -210,9 +223,22 @@ def _normalize_commands(commands) -> List[str]:
 
 
 DANGEROUS = {
-    "pymol": re.compile(r"^\s*(quit|exit|reinitialize|system|pip|conda|cd|rm)\b", re.I),
-    "chimerax": re.compile(r"^\s*(exit|quit|close\s+session|pip\b|shell\b|system\b|remotecontrol\b)", re.I),
+    "pymol": re.compile(r"^\s*(q|qu|qui|quit|exit|reinit\w*|syst\w*|pip|conda|cd|rm|/|python\b|cmd\.(quit|system|reinitialize)|@)", re.I),
+    "chimerax": re.compile(r"^\s*(exit|quit|clo\w*\s+sess\w*|pip\b|shell\b|system\b|remotecontrol\b|runscript\b|open\s+\S+\.(py|cxc)\b)", re.I),
 }
+
+
+def dangerous_parts(app: str, cmds) -> list:
+    """Sub-commands (split on ';') that would quit/reset the program or run shell/package/script code."""
+    pat = DANGEROUS.get(app)
+    if not pat:
+        return []
+    bad = []
+    for c in cmds:
+        for part in str(c).split(";"):
+            if part.strip() and pat.match(part):
+                bad.append(part.strip()[:120])
+    return bad
 
 
 def run(sess: AppSession, commands, stop_on_error: bool = True, timeout: float = 600.0,
@@ -220,12 +246,13 @@ def run(sess: AppSession, commands, stop_on_error: bool = True, timeout: float =
     cmds = _normalize_commands(commands)
     if not cmds:
         return dumps({"error": "no commands given"})
-    pat = DANGEROUS.get(sess.app)
-    if pat and not allow_dangerous:
-        bad = [c for c in cmds if pat.match(c)]
+    if not allow_dangerous:
+        bad = dangerous_parts(sess.app, cmds)
         if bad:
             return dumps({"ok": False, "error": "refused without allow_dangerous=true: %s (these quit the program, reset the "
-                                               "session or run shell/package commands; confirm with the user first)" % bad})
+                                               "session or run shell/package/script code; confirm with the user first)" % bad})
+    if any(len(c) > 20000 for c in cmds):
+        return dumps({"ok": False, "error": "a command is longer than 20000 characters; put long content in a file"})
     try:
         r = sess.call("run", timeout=timeout, commands=cmds, stop_on_error=stop_on_error, **(extra or {}))
     except (BridgeError, NotConnected) as e:
@@ -235,6 +262,8 @@ def run(sess: AppSession, commands, stop_on_error: bool = True, timeout: float =
         r["instance"] = note
     for res in r.get("results", []):
         res["output"] = _trim(res.get("output"))
+        if isinstance(res.get("command"), str) and len(res["command"]) > 500:
+            res["command"] = res["command"][:500] + "…"
         if res.get("traceback"):
             res["traceback"] = _trim(res["traceback"], 2000)
         if res.get("value") is None:
@@ -262,6 +291,8 @@ def python(sess: AppSession, code: str, timeout: float = 600.0) -> str:
 
 
 def scene(sess: AppSession, detail: str = "summary", names: Optional[List[str]] = None, key: str = "objects") -> str:
+    if detail not in ("summary", "full"):
+        return dumps({"ok": False, "error": "detail must be 'summary' or 'full'"})
     try:
         r = sess.call("scene", detail=detail, **({key: names} if names else {}))
     except (BridgeError, NotConnected) as e:
@@ -294,6 +325,9 @@ def render(sess: AppSession, width: int, height: int, path: Optional[str], retur
            grid: str, extra: dict, tag: str = "render", timeout: float = 600.0, analyze: bool = True):
     from .mcpcompat import Image
     cols, rows = _grid(grid)
+    err = _check_size(width, height)
+    if err:
+        return dumps({"ok": False, "error": err})
     try:
         r = sess.call("render", timeout=timeout, width=width, height=height, path=path, **extra)
     except (BridgeError, NotConnected) as e:
@@ -314,10 +348,30 @@ def render(sess: AppSession, width: int, height: int, path: Optional[str], retur
     else:
         rgba = ia.load_rgba(png)
         out["width"], out["height"] = int(rgba.shape[1]), int(rgba.shape[0])
+    note = instance_note(sess)
+    if note:
+        out["instance"] = note
     text = dumps(out)
     if return_image:
         return [text, Image(data=ia.thumbnail_png(png, 1024), format="png")]
     return text
+
+
+MAX_RENDER_PIXELS = 16_000_000   # 4000x4000; bigger frames exhaust GPU/CPU memory and can kill the viewer
+
+
+def _check_size(width, height) -> Optional[str]:
+    try:
+        w, h = int(width), int(height)
+    except Exception:
+        return "width/height must be integers"
+    if w == 0 and h == 0:
+        return None
+    if w < 16 or h < 16:
+        return "width and height must be at least 16 pixels (or both 0 for the current window size)"
+    if w * h > MAX_RENDER_PIXELS:
+        return "frame too large (%dx%d); the limit is %d pixels" % (w, h, MAX_RENDER_PIXELS)
+    return None
 
 
 def layout(sess: AppSession, items: List[dict], width: int, height: int, occlusion: bool, return_image: bool,
@@ -325,6 +379,9 @@ def layout(sess: AppSession, items: List[dict], width: int, height: int, occlusi
     """items: [{label, <spec_key>: ...}] - the spec key is app specific ('selection' or 'spec')."""
     from .mcpcompat import Image
     cols, rows = _grid(grid)
+    err = _check_size(width, height)
+    if err:
+        return dumps({"ok": False, "error": err})
     if not items:
         return dumps({"ok": False, "error": "nothing to lay out: no displayed items found"})
     colors = ia.id_colors(len(items))
@@ -355,10 +412,18 @@ def layout(sess: AppSession, items: List[dict], width: int, height: int, occlusi
 def compare(sess: AppSession, path_a: Optional[str], path_b: Optional[str], grid: str) -> str:
     cols, rows = _grid(grid)
     if not path_a or not path_b:
-        if len(sess.renders) < 2:
-            return dumps({"ok": False, "error": "need two renders (paths) to compare; only %d saved so far" % len(sess.renders)})
-        path_a = path_a or sess.renders[-2]
-        path_b = path_b or sess.renders[-1]
+        renders = list(sess.renders)
+        if len(renders) < 2:   # fresh server process: fall back to the newest files on disk
+            try:
+                files = sorted((os.path.join(renders_dir(), f) for f in os.listdir(renders_dir())
+                                if f.startswith(sess.app + "_render_") and f.endswith(".png")), key=os.path.getmtime)
+                renders = files[-2:]
+            except OSError:
+                renders = []
+        if len(renders) < 2:
+            return dumps({"ok": False, "error": "need two renders (paths) to compare; only %d found" % len(renders)})
+        path_a = path_a or renders[-2]
+        path_b = path_b or renders[-1]
     try:
         d = ia.diff_images(os.path.expanduser(path_a), os.path.expanduser(path_b), grid_cols=cols, grid_rows=rows)
     except Exception as e:
@@ -378,6 +443,8 @@ def analyze_image(path: str, grid: str) -> str:
 
 
 def events(sess: AppSession, since: Optional[int], limit: int) -> str:
+    if limit is None or int(limit) < 1:
+        return dumps({"ok": False, "error": "limit must be >= 1"})
     try:
         r = sess.call("events", since=sess.events_seq if since is None else since, limit=limit)
     except (BridgeError, NotConnected) as e:
@@ -402,6 +469,8 @@ def events(sess: AppSession, since: Optional[int], limit: int) -> str:
 
 
 def log(sess: AppSession, n: int) -> str:
+    if n is None or int(n) < 1:
+        return dumps({"ok": False, "error": "n must be >= 1"})
     try:
         r = sess.call("log", n=n)
     except (BridgeError, NotConnected) as e:
@@ -417,7 +486,8 @@ def quit_app(sess: AppSession, confirm: bool = False) -> str:
     if not confirm:
         return dumps({"ok": False, "error": "refused: pass confirm=true after the user agreed to close the program"})
     try:
-        r = sess.call("quit", timeout=10)
+        sess.connect(auto_launch=False)
+        r = sess.client.call("quit", timeout=10)
     except (BridgeError, NotConnected) as e:
         return dumps({"ok": False, "error": str(e)})
     sess.client.info = None
@@ -509,4 +579,7 @@ def python_json(sess: AppSession, code: str, timeout: float = 600.0) -> str:
         out.setdefault("ok", True)
         if r.get("changes"):
             out["changes"] = r["changes"]
-    return dumps(out)
+    text = dumps(out)
+    if len(text) > 120_000:
+        return dumps({"ok": False, "error": "result too large (%d chars); use paging (max_rows/offset) or a narrower selection" % len(text)})
+    return text

@@ -89,7 +89,7 @@ def run(commands: Union[str, List[str]], stop_on_error: bool = True, allow_dange
     Commands that quit, reinitialize or run shell/package managers are refused unless allow_dangerous=True (ask
     the user first).
     """
-    return sc.run(SESSION, commands, stop_on_error, allow_dangerous)
+    return sc.run(SESSION, commands, stop_on_error=stop_on_error, allow_dangerous=allow_dangerous)
 
 
 @mcp.tool()
@@ -221,7 +221,7 @@ def help(command: str) -> str:
 
 @mcp.tool()
 def commands(prefix: str = "") -> str:
-    """List available PyMOL command names (optionally filtered by prefix)."""
+    """List available PyMOL command names (optionally filtered by a case-insensitive prefix)."""
     return sc.simple_call(SESSION, "commands", prefix=prefix)
 
 

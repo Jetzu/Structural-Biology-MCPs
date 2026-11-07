@@ -435,34 +435,23 @@ def _parse_hex(h: str) -> Tuple[int, int, int]:
 
 
 def id_colors(n: int) -> List[Tuple[int, int, int]]:
-    """``n`` well-separated flat colours for an ID pass (never pure black)."""
-    out = []
-    # spread over a 3D lattice of 6 levels per channel, skipping (0,0,0)
-    levels = [40, 80, 120, 160, 200, 240]
+    """``n`` flat colours for an ID pass: every channel >= 70 (never confusable with a black background or with
+    anti-aliased dark fringes) and at least 60 apart in every channel between any two colours."""
     import itertools
+    levels = [70, 130, 190, 250]
     combos = list(itertools.product(levels, repeat=3))
-    # order combos so successive colours are far apart
-    combos.sort(key=lambda c: (sum(c) % 3, c))
-    stride = max(1, len(combos) // max(n, 1))
-    i = 0
-    while len(out) < n:
-        c = combos[(i * stride) % len(combos)]
-        if c not in out:
-            out.append(c)
-        i += 1
-        if i > len(combos) * 4:
+    # start with saturated, well separated colours; greys last
+    combos.sort(key=lambda c: (len(set(c)) == 1, -(max(c) - min(c)), c))
+    out = []
+    for c in combos:
+        if len(out) >= n:
             break
-    while len(out) < n:  # fall back to any remaining colour
-        for c in combos:
-            if c not in out:
-                out.append(c)
-                if len(out) >= n:
-                    break
+        out.append(c)
     return out[:n]
 
 
 def analyze_segmentation(src: ImageSource, legend: Dict[str, str], bg_rgb: Optional[Sequence[int]] = None,
-                         grid_cols: int = 48, grid_rows: int = 20, tol: int = 40) -> dict:
+                         grid_cols: int = 48, grid_rows: int = 20, tol: int = 28) -> dict:
     """Per-item visibility statistics from an ID-pass render.
 
     ``legend`` maps hex colour -> item label.  Pixels are matched exactly
@@ -484,6 +473,9 @@ def analyze_segmentation(src: ImageSource, legend: Dict[str, str], bg_rgb: Optio
         is_bg = rgba[:, :, 3].reshape(-1) <= 8
     else:
         is_bg = (np.abs(flat - np.array(bg, dtype=np.int16)).max(axis=1) <= 12)
+    if colors.shape[0] and int(colors.min()) >= 60:
+        # ID colours never go below 70 per channel: anything darker is background or an anti-aliased fringe
+        is_bg = is_bg | (flat.max(axis=1) < 45)
     fg_idx = np.flatnonzero(~is_bg)
     if fg_idx.size and colors.shape[0]:
         fgpx = flat[fg_idx]
@@ -630,8 +622,13 @@ def diff_images(a_src: ImageSource, b_src: ImageSource, tol: int = 16,
     bb = bbox_of(changed)
     cells = grid_occupancy(changed, grid_cols, grid_rows)
     frac = n / float(h * w)
+    mean_diff = float(d.mean())
+    noise = n > 0 and frac < 0.03 and mean_diff < 3.0 and float(d[changed].mean() if n else 0) < 90
     if n == 0:
         summary = "Images are identical within tolerance."
+    elif noise:
+        summary = ("%.1f%% of pixels differ slightly (mean change %.1f/255): within the noise of a ray-traced or "
+                   "anti-aliased render; treat the images as the same" % (frac * 100, mean_diff))
     else:
         summary = "%.1f%% of pixels changed" % (frac * 100)
         if bb:
@@ -642,7 +639,8 @@ def diff_images(a_src: ImageSource, b_src: ImageSource, tol: int = 16,
         "width": w, "height": h, "resized_b": resized,
         "changed_fraction": _r(frac, 4),
         "changed_pixels": n,
-        "mean_abs_diff": _r(float(d.mean()), 2),
+        "mean_abs_diff": _r(mean_diff, 2),
+        "likely_identical": bool(n == 0 or noise),
         "bbox": _bbox_dict(bb, w, h),
         "ascii": ascii_map(cells),
         "summary": summary,

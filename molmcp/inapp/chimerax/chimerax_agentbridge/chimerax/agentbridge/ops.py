@@ -224,11 +224,15 @@ def fingerprint(session):
     for m in session.models.list():
         try:
             d = {"name": m.name, "display": bool(m.display), "type": type(m).__name__}
+            try:
+                d["pos"] = tuple(round(float(x), 2) for x in m.position.matrix.flatten()[[3, 7, 11]])
+            except Exception:
+                pass
             if hasattr(m, "num_atoms"):
                 d["atoms"] = int(m.num_atoms)
                 try:
                     d["shown_atoms"] = int(m.atoms.displays.sum())
-                    d["shown_ribbons"] = int(m.residues.ribbon_displays.sum())
+                    d["shown_ribbons"] = int((m.residues.ribbon_displays & (m.residues.polymer_types != 0)).sum())
                     d["selected"] = int(m.atoms.selecteds.sum())
                     d["colour_hash"] = int(m.atoms.colors.sum()) * 7 + int(m.residues.ribbon_colors.sum())
                 except Exception:
@@ -268,6 +272,8 @@ def diff_fingerprints(a, b):
         o = a["models"][k]
         if o["display"] != d["display"]:
             ch.append({"change": "model_display", "id": "#" + k, "display": d["display"]})
+        if o.get("pos") != d.get("pos") and "pos" in d:
+            ch.append({"change": "model_moved", "id": "#" + k})
         for f in ("atoms", "shown_atoms", "shown_ribbons", "selected"):
             if f in d and f in o and o[f] != d[f]:
                 ch.append({"change": f, "id": "#" + k, "from": o[f], "to": d[f]})
@@ -343,7 +349,7 @@ def _run_one(session, text, log, want_json=False):
         if not t or t == text:
             continue
         # drop the command echo lines ChimeraX logs itself
-        lines = [ln for ln in t.splitlines() if ln.strip() and ln.strip() != text]
+        lines = [ln for ln in t.splitlines() if ln.strip() and ln.strip() != text and ln.strip() not in text]
         if not lines:
             continue
         t = "\n".join(lines)
@@ -404,8 +410,11 @@ def op_python(session, args):
     _last_fp = after
     if _bridge:
         _bridge.events.add("agent_python", ok=error is None, chars=len(code))
-    logtext = "\n".join(clean_log_text(m) for _, m in cap.msgs)
-    return {"ok": error is None, "stdout": out_tee.getvalue() + err_tee.getvalue() + logtext,
+    printed = out_tee.getvalue() + err_tee.getvalue()
+    extra = [clean_log_text(m) for _, m in cap.msgs]
+    extra = [t for t in extra if t and t not in printed]
+    logtext = ("\n" + "\n".join(extra)) if extra else ""
+    return {"ok": error is None, "stdout": printed + logtext,
             "result": bridgecore.json_safe(ns.get("result")), "error": error, "traceback": tb,
             "changes": diff_fingerprints(before, after), "ms": round((time.time() - t0) * 1000, 1)}
 
@@ -461,7 +470,7 @@ def _model_info(session, m, detail):
                 info["active_coordset"] = int(m.active_coordset_id)
             disp = atoms.displays
             info["shown_atoms"] = int(disp.sum())
-            info["shown_ribbon_residues"] = int(residues.ribbon_displays.sum())
+            info["shown_ribbon_residues"] = int((residues.ribbon_displays & (residues.polymer_types != 0)).sum())
             dm = atoms.draw_modes[disp] if disp.any() else atoms.draw_modes[:0]
             info["atom_styles_shown"] = {name: int((dm == code).sum()) for code, name in ((0, "sphere"), (1, "ball"), (2, "stick")) if (dm == code).any()}
             info["selected_atoms"] = int(atoms.selecteds.sum())
@@ -514,12 +523,10 @@ def _model_info(session, m, detail):
             info["isosurfaces"] = surfs
             info["image_shown"] = bool(getattr(m, "image_shown", False))
             try:
-                info["value_range"] = [round(float(x), 4) for x in m.data.value_range()] if hasattr(m.data, "value_range") else None
-            except Exception:
-                pass
-            try:
-                st = m.matrix_value_statistics()
-                info["stats"] = {"min": round(float(st.minimum), 4), "max": round(float(st.maximum), 4), "mean": round(float(st.mean), 4), "sd": round(float(st.standard_deviation), 4)}
+                arr = m.full_matrix()
+                import numpy as _np
+                info["stats"] = {"min": round(float(arr.min()), 4), "max": round(float(arr.max()), 4), "mean": round(float(arr.mean()), 4), "sd": round(float(arr.std()), 4)}
+                info["value_range"] = [info["stats"]["min"], info["stats"]["max"]]
             except Exception:
                 pass
         except Exception as e:
@@ -787,13 +794,15 @@ def op_render_ids(session, args):
     try:
         from chimerax.atomic import selected_atoms
         sel_atoms = selected_atoms(session)
-        sel_models = [m for m in session.models.list() if getattr(m, "selected", False)]
+        # non-atomic models that are selected as a whole (surfaces, volumes); atomic ones are restored per atom
+        sel_models = [m for m in session.models.list() if getattr(m, "selected", False) and not hasattr(m, "atoms")]
         if len(sel_atoms) or sel_models:
             session.selection.clear()
 
             def restore_sel(sel_atoms=sel_atoms, sel_models=sel_models):
                 try:
-                    sel_atoms.selecteds = True
+                    if len(sel_atoms):
+                        sel_atoms.selecteds = True
                 except Exception:
                     pass
                 for m in sel_models:
@@ -891,14 +900,17 @@ def op_render_ids(session, args):
             atoms = objs.atoms
             if len(atoms):
                 atoms.colors = rgba
-                atoms.residues.ribbon_colors = rgba
+                atoms.unique_residues.ribbon_colors = rgba
             for m in objs.models:
                 if hasattr(m, "atoms") and hasattr(m, "num_atoms"):
-                    m.atoms.colors = rgba
-                    m.residues.ribbon_colors = rgba
-                    for c in m.child_models():
-                        if hasattr(c, "vertex_colors") and hasattr(c, "color"):
-                            _flat_color_surface(c, rgba)
+                    # whole-model colouring only when the spec really covers the whole structure
+                    whole = len(atoms.filter(atoms.structures == m)) >= m.num_atoms if len(atoms) else False
+                    if whole:
+                        m.atoms.colors = rgba
+                        m.residues.ribbon_colors = rgba
+                        for c in m.child_models():
+                            if hasattr(c, "vertex_colors") and hasattr(c, "color"):
+                                _flat_color_surface(c, rgba)
                 elif hasattr(m, "vertex_colors") and hasattr(m, "color"):
                     _flat_color_surface(m, rgba)
             # molecular surfaces belonging to a chain-level item
@@ -1110,8 +1122,12 @@ def _install_triggers(session):
             if name.startswith("command"):
                 _bridge.events.add(name.replace(" ", "_"), command=str(data)[:500])
                 _bridge.touch()
-            elif name in ("add models", "remove models"):
-                _bridge.events.add(name.replace(" ", "_"), models=["#%s %s" % (m.id_string, m.name) for m in list(data)[:50]])
+            elif name == "add models":
+                _bridge.events.add("add_models", models=["#%s %s" % (m.id_string, m.name) for m in list(data)[:50]])
+            elif name == "remove models":
+                names = [m.name for m in list(data)[:50]]
+                if names:
+                    _bridge.events.add("remove_models", models=names)
             else:
                 _bridge.events.add(name.replace(" ", "_"))
         except Exception:

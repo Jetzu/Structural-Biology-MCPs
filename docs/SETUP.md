@@ -667,7 +667,10 @@ Both servers add convenience tools that run small scripts inside the viewer and 
 > representations, colours), `run(json=True)` in ChimeraX for structured command output, `allow_dangerous=True`
 > required for commands that quit/reset the session or run shell/package managers, and `confirm=True` required
 > by `quit_pymol` / `quit_chimerax`.  PyMOL now ships 14 skills (incl. `alphafold-plddt`, `mutagenesis`) and
-> ChimeraX 13 (incl. `ligand-binding-site`).
+> ChimeraX 13 (incl. `ligand-binding-site`).  Further tools: `mutate`, `alignment_info` (both), `map_info`,
+> `set_isolevel`, `set_setting`, `measure(kind="sasa")` (PyMOL), `set_view`, `wait_for_jobs` (ChimeraX); every skill
+> is also an MCP prompt.  `tests/qa_client.py` drives the real servers from a shell (`start pymol`, `call <app>
+> <tool> '<json>'`, `stop pymol`) with `MOLMCP_HOME` for an isolated instance.
 
 ## 7. Headless use and environment variables
 

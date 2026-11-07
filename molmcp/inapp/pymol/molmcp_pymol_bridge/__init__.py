@@ -211,10 +211,24 @@ def _decode_color_value(v, color_names=None):
         if color_names is not None:
             name = color_names.get(v)
         if name is None:
-            for n, i in cmd.get_color_indices():
+            for n, i in cmd.get_color_indices(all=1):
                 if i == v:
                     name = n
                     break
+        if name is None and rgb:
+            try:
+                from pymol import colornames  # noqa: F401  (not in every build)
+            except Exception:
+                pass
+            # last resort: nearest of the standard palette names PyMOL ships
+            best, bd = None, 1e9
+            for n, i in cmd.get_color_indices():
+                t = cmd.get_color_tuple(i)
+                if t:
+                    d = sum((a - b) ** 2 for a, b in zip(t, rgb))
+                    if d < bd:
+                        best, bd = n, d
+            name = best if bd < 0.002 else None
         return name or "index_%d" % v, [int(round(x * 255)) for x in rgb] if rgb else None
     except Exception:
         return str(v), None
@@ -277,11 +291,24 @@ def fingerprint():
                 colours[o] = (colours[o], sum(acc), len(set(acc)))
         except Exception:
             pass
+    rep_counts = {}
+    for o in objs:
+        if o in n_atoms:
+            try:
+                rep_counts[o] = tuple(cmd.count_atoms("(rep %s) and %%%s" % (rep, o)) for rep in ("cartoon", "sticks", "spheres", "surface", "lines", "ribbon", "mesh", "dots"))
+            except Exception:
+                pass
+    try:
+        n_frames = cmd.count_frames()
+    except Exception:
+        n_frames = 0
     fp = {
         "objects": objs,
         "enabled": enabled,
         "selections": sels,
         "n_atoms": n_atoms,
+        "rep_counts": rep_counts,
+        "frames": n_frames,
         "colours": colours,
         "reps": {o: tuple(vis.get(o, [None, [], [], None])[2] or []) for o in objs},
         "view": view,
@@ -312,10 +339,15 @@ def diff_fingerprints(a, b):
     for o, n in b["n_atoms"].items():
         if o in a["n_atoms"] and a["n_atoms"][o] != n:
             ch.append({"change": "atom_count", "object": o, "from": a["n_atoms"][o], "to": n})
-    for o, reps in b["reps"].items():
-        if o in a["reps"] and a["reps"][o] != reps:
+    rep_order = ("cartoon", "sticks", "spheres", "surface", "lines", "ribbon", "mesh", "dots")
+    for o, counts in b.get("rep_counts", {}).items():
+        old_c = a.get("rep_counts", {}).get(o)
+        if old_c is not None and old_c != counts:
             ch.append({"change": "representations", "object": o,
-                       "shown": [REP_NAMES.get(i, str(i)) for i in reps]})
+                       "atoms_per_rep": {r: n for r, n in zip(rep_order, counts) if n},
+                       "was": {r: n for r, n in zip(rep_order, old_c) if n}})
+    if a.get("frames") != b.get("frames"):
+        ch.append({"change": "movie_frames", "from": a.get("frames"), "to": b.get("frames")})
     for o, col in b.get("colours", {}).items():
         if o in a.get("colours", {}) and a["colours"][o] != col:
             ch.append({"change": "colours", "object": o, "detail": "atom/object colours changed"})
@@ -509,7 +541,7 @@ def _object_summary(name, detail, color_names):
         info["atoms"] = n
         info["states"] = cmd.count_states("%" + name)
         info["chains"] = cmd.get_chains("%" + name)
-        info["reps_object_level"] = [REP_NAMES.get(i, str(i)) for i in (vis[2] or [])]
+        info["reps_enabled_mask"] = [REP_NAMES.get(i, str(i)) for i in (vis[2] or [])]   # object-level enable mask, not what is drawn
         try:
             info["title"] = cmd.get_title(name, 1)
         except Exception:
@@ -541,8 +573,7 @@ def _object_summary(name, detail, color_names):
                         d["resv_min"] = resv
                     if d["resv_max"] is None or resv > d["resv_max"]:
                         d["resv_max"] = resv
-                    if ss_:
-                        ss[ss_] += 1
+                    ss[ss_ or "L"] += 1
                 for bit, rname in REP_NAMES.items():
                     if reps & (1 << bit):
                         rep_counts[rname] += 1
@@ -724,10 +755,9 @@ def op_set_view(args):
 def _png(width, height, ray, dpi, transparent):
     cmd = _cmd()
     saved = {}
-    if transparent:
-        for s in ("ray_opaque_background", "opaque_background"):
-            saved[s] = _setting_value(s)
-            cmd.set(s, 0)
+    for s in ("ray_opaque_background", "opaque_background"):
+        saved[s] = _setting_value(s)
+        cmd.set(s, 0 if transparent else 1)
     try:
         if is_gui() and not ray:
             # In the Qt GUI an in-memory PNG at an explicit size is only available
@@ -744,10 +774,17 @@ def _png(width, height, ray, dpi, transparent):
     return data
 
 
+MAX_RENDER_PIXELS = 16_000_000
+
+
 def op_render(args):
     cmd = _cmd()
     width = int(args.get("width") or 0)
     height = int(args.get("height") or 0)
+    if (width and width < 16) or (height and height < 16) or width < 0 or height < 0:
+        raise ValueError("width/height must be >= 16 (or 0 for the viewport size)")
+    if width * height > MAX_RENDER_PIXELS:
+        raise ValueError("frame too large (%dx%d > %d pixels)" % (width, height, MAX_RENDER_PIXELS))
     ray = int(bool(args.get("ray", False)))
     dpi = float(args.get("dpi") or -1)
     transparent = bool(args.get("transparent", False))
@@ -777,6 +814,9 @@ def op_render_ids(args):
     solo = bool(args.get("solo", False))
     if not items:
         raise ValueError("items required: [{label, selection, rgb}]")
+    if width * height > MAX_RENDER_PIXELS or (width and width < 16) or (height and height < 16):
+        raise ValueError("bad frame size %dx%d" % (width, height))
+    t_start = time.time()
     undo_state = _setting_value("suspend_undo")
     try:
         cmd.set("suspend_undo", 1, quiet=1)
@@ -823,9 +863,11 @@ def op_render_ids(args):
             cmd.set_color(cname, [r / 255.0, g / 255.0, b / 255.0], quiet=1)
             sel = "(%s)" % it["selection"]
             cmd.color(cname, sel, quiet=1)
+            # only override rep colours that are actually set somewhere (atom-level writes are O(N) each)
             for s in REP_COLOR_SETTINGS:
                 try:
-                    cmd.set(s, cname, sel, quiet=1)
+                    if any(_setting_value(s, o) not in (None, -1, (-1,)) for o in involved_objects) or _setting_value(s) not in (None, -1, (-1,)):
+                        cmd.set(s, cname, sel, quiet=1)
                 except Exception:
                     pass
             for obj in (cmd.get_object_list(sel) or []):
@@ -890,7 +932,8 @@ def op_render_ids(args):
                 cmd.set("suspend_undo", undo_state, quiet=1)
             except Exception:
                 pass
-    return {"png": composite, "solo": solos, "legend": {"#%02x%02x%02x" % tuple(it["rgb"]): it["label"] for it in items}}
+    return {"png": composite, "solo": solos, "legend": {"#%02x%02x%02x" % tuple(it["rgb"]): it["label"] for it in items},
+            "ms": round((time.time() - t_start) * 1000, 1)}
 
 
 def op_events(args):
@@ -1139,7 +1182,37 @@ def __init_plugin__(app=None):
             _log(" Agent bridge failed to start: %s" % e)
 
 
+class _StdoutRecorder:
+    """Headless PyMOL prints feedback straight to stdout; keep a copy for the `log` op."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._buf = ""
+
+    def write(self, s):
+        try:
+            self._stream.write(s)
+        except Exception:
+            pass
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line.strip():
+                _feedback.append((time.time(), _strip_ansi(line)))
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 def launch(port=None):
     """Entry point used by the launcher script (works headless and in the GUI)."""
     _register_commands()
+    if not is_gui() and not isinstance(sys.stdout, _StdoutRecorder):
+        sys.stdout = _StdoutRecorder(sys.stdout)
     return start(port)
