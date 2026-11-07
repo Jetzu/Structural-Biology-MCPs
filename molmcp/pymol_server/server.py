@@ -55,6 +55,7 @@ SESSION = sc.AppSession("pymol", _launcher, discovery.find_pymol)
 sc.register_skill_extras(mcp, "pymol")
 from . import extra_tools  # noqa: E402
 extra_tools.register(mcp, SESSION)
+extra_tools.register_more(mcp, SESSION)
 
 
 @mcp.tool()

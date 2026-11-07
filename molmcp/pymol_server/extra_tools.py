@@ -28,8 +28,8 @@ def register(mcp, SESSION):
                 selection4: Optional[str] = None, name: Optional[str] = None) -> str:
         """Measure without clutter: kind = "distance" (two single-atom selections), "angle" (three), "dihedral" (four),
         "extent"/"center" (one selection: bounding box, size, centre of mass), "rmsd" (two selections with equal atom
-        counts, in place, no fitting), "count" (atoms/residues/chains of selection1). `name` also draws the
-        distance/angle/dihedral object."""
+        counts, in place, no fitting), "count" (atoms/residues/chains of selection1), "sasa" (solvent-accessible
+        surface area of selection1 in Å^2). `name` also draws the distance/angle/dihedral object."""
         code = PYMOL_MEASURE % dict(kind=kind, s1=selection1, s2=selection2, s3=selection3, s4=selection4, name=name)
         return sc.python_json(SESSION, code)
 
@@ -84,6 +84,13 @@ elif kind == "rmsd":
 elif kind == "count":
     res = set(); cmd.iterate(sels[0], "_r.add((model, chain, resi))", space={"_r": res})
     result = {"kind": kind, "atoms": cmd.count_atoms(sels[0]), "residues": len(res), "chains": cmd.get_chains(sels[0])}
+elif kind == "sasa":
+    old = cmd.get("dot_solvent"); cmd.set("dot_solvent", 1); cmd.set("dot_density", 3)
+    try:
+        area = cmd.get_area(sels[0])
+    finally:
+        cmd.set("dot_solvent", old)
+    result = {"kind": kind, "value": round(float(area), 1), "unit": "A^2", "note": "solvent-accessible area via get_area with dot_solvent=1"}
 else:
     raise ValueError("unknown kind " + kind)
 name = %(name)r
@@ -177,4 +184,141 @@ for d in acc.values():
                  "reps_shown": [REP[i] for i in REP if d["reps"] & (1 << i)], "color": cname, "rgb": rgb})
 total = len(rows)
 result = {"selection": %(sel)r, "total": total, "offset": %(off)d, "rows": rows[%(off)d:%(off)d + %(n)d]}
+'''
+
+
+def register_more(mcp, SESSION):
+    """Second wave of structured tools (audit items 5, 7, 10 and honourable mentions)."""
+
+    @mcp.tool()
+    def mutate(selection: str, residue: str, rotamer: int = 0, keep_original_as: Optional[str] = None) -> str:
+        """Point mutation with PyMOL's mutagenesis wizard (headless-safe). `selection` must match exactly one
+        residue (e.g. "1ubq and chain A and resi 48"); `residue` is a three-letter code (ALA, PHE, ...).
+        rotamer=0 picks the rotamer with the lowest clash score, otherwise the 1-based rotamer index.
+        keep_original_as copies the object first (e.g. "wt"). Returns rotamer scores and close contacts."""
+        return sc.python_json(SESSION, PYMOL_MUTATE % dict(sel=selection, res=residue.upper(), rot=int(rotamer), keep=keep_original_as))
+
+    @mcp.tool()
+    def map_info(name: Optional[str] = None) -> str:
+        """Density maps and their isosurfaces: for every map object the grid size, min/max/mean/sd, and for every
+        mesh/surface object derived from it the isolevel (and the map it was carved from, if known)."""
+        return sc.python_json(SESSION, PYMOL_MAP_INFO % dict(name=name))
+
+    @mcp.tool()
+    def set_isolevel(name: str, level: float) -> str:
+        """Change the contour level of an existing mesh/surface/volume object (PyMOL `isolevel`)."""
+        return sc.python_json(SESSION, "cmd.isolevel(%r, %f)\nresult = {'object': %r, 'level': %f}" % (name, float(level), name, float(level)))
+
+    @mcp.tool()
+    def alignment_info(alignment_object: str, max_pairs: int = 400) -> str:
+        """Residue pairs behind an alignment object created by `align`/`super`/`cealign` with object_name=...:
+        which residues superpose, with their per-pair CA distance. Use after `align(..., object_name="aln")`."""
+        return sc.python_json(SESSION, PYMOL_ALIGNMENT_INFO % dict(aln=alignment_object, n=int(max_pairs)))
+
+    @mcp.tool()
+    def set_setting(name: str, value: str, selection: Optional[str] = None) -> str:
+        """Set a PyMOL setting (global, or for an object/selection). Values are parsed like the `set` command
+        ("0.5", "on", "[1,0,0]", "marine"). Returns the old and new value."""
+        return sc.python_json(SESSION, PYMOL_SET_SETTING % dict(name=name, value=value, sel=selection))
+
+
+PYMOL_MUTATE = r'''
+sel, res, rot, keep = %(sel)r, %(res)r, %(rot)d, %(keep)r
+ids = set(); cmd.iterate(sel, "_i.add((model, chain, resi))", space={"_i": ids})
+if len(ids) != 1:
+    raise ValueError("selection must match exactly one residue, matched %%d: %%s" %% (len(ids), sorted(ids)[:5]))
+model, chain, resi = next(iter(ids))
+if keep:
+    cmd.create(keep, model)
+before = []
+cmd.iterate(sel, "_b.append(resn)", space={"_b": before})
+cmd.wizard("mutagenesis"); cmd.do("refresh_wizard")
+w = cmd.get_wizard()
+w.set_mode(res)
+w.do_select("/%%s//%%s/%%s/" %% (model, chain, resi))
+scores = [float(x) for x in getattr(w, "bump_scores", []) or []]
+n_rot = cmd.count_states("mutation") if "mutation" in cmd.get_names("all") else len(scores)
+chosen = rot if rot > 0 else ((scores.index(min(scores)) + 1) if scores else 1)
+cmd.frame(chosen)
+w.apply()
+cmd.set_wizard()
+after = []
+cmd.iterate(sel, "_a.append(resn)", space={"_a": after})
+close = cmd.find_pairs("(%%s) and not hydro" %% sel, "(%%s) and not hydro and not (%%s)" %% (model, sel), cutoff=2.5)
+result = {"object": model, "chain": chain, "resi": resi, "from": before[0] if before else None, "to": after[0] if after else None,
+          "rotamers": n_rot, "chosen_rotamer": chosen, "bump_scores": [round(s, 2) for s in scores][:20],
+          "heavy_atom_contacts_below_2.5A": len(close), "kept_original_as": keep}
+'''
+
+PYMOL_MAP_INFO = r'''
+name = %(name)r
+out = {"maps": [], "isosurfaces": []}
+for o in cmd.get_names("public_objects"):
+    if name and o != name:
+        continue
+    t = cmd.get_type(o)
+    if t == "object:map":
+        d = {"name": o, "type": "map"}
+        try:
+            h = cmd.get_volume_histogram(o)
+            d["min"], d["max"], d["mean"], d["sd"] = [round(float(x), 4) for x in h[:4]]
+        except Exception as e:
+            d["error"] = str(e)
+        try:
+            ext = cmd.get_extent(o); d["extent"] = [[round(x, 1) for x in ext[0]], [round(x, 1) for x in ext[1]]]
+        except Exception:
+            pass
+        out["maps"].append(d)
+    elif t in ("object:mesh", "object:surface", "object:volume", "object:slice"):
+        d = {"name": o, "type": t.split(":")[1]}
+        try:
+            d["level"] = round(float(cmd.isolevel(o, 0.0, query=1)), 4)
+        except Exception as e:
+            d["level_error"] = str(e)[:120]
+        out["isosurfaces"].append(d)
+result = out
+'''
+
+PYMOL_ALIGNMENT_INFO = r'''
+aln, n = %(aln)r, %(n)d
+raw = cmd.get_raw_alignment(aln)
+info = {}
+objs = set()
+for pair in raw:
+    for model, idx in pair:
+        objs.add(model)
+for m in objs:
+    cmd.iterate("%%" + m, "_d[(model, index)] = (chain, resn, resi, name)", space={"_d": info})
+pairs = []
+for pair in raw:
+    if len(pair) < 2:
+        continue
+    (m1, i1), (m2, i2) = pair[0], pair[1]
+    a, b = info.get((m1, i1)), info.get((m2, i2))
+    if not a or not b:
+        continue
+    try:
+        d = cmd.get_distance("%%s and index %%d" %% (m1, i1), "%%s and index %%d" %% (m2, i2))
+    except Exception:
+        d = None
+    pairs.append({"a": "%%s/%%s/%%s%%s" %% (m1, a[0], a[1], a[2]), "b": "%%s/%%s/%%s%%s" %% (m2, b[0], b[1], b[2]), "distance": round(d, 2) if d is not None else None})
+result = {"alignment": aln, "objects": sorted(objs), "pairs_total": len(pairs), "pairs": pairs[:n],
+          "worst_pairs": sorted([p for p in pairs if p["distance"] is not None], key=lambda p: -p["distance"])[:10]}
+'''
+
+PYMOL_SET_SETTING = r'''
+name, value, sel = %(name)r, %(value)r, %(sel)r
+try:
+    old = cmd.get_setting_tuple(name, sel)[1] if sel else cmd.get_setting_tuple(name)[1]
+except Exception:
+    old = None
+if sel:
+    cmd.set(name, value, sel)
+else:
+    cmd.set(name, value)
+try:
+    new = cmd.get_setting_tuple(name, sel)[1] if sel else cmd.get_setting_tuple(name)[1]
+except Exception:
+    new = None
+result = {"setting": name, "selection": sel, "old": old, "new": new}
 '''

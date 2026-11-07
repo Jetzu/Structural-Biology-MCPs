@@ -57,6 +57,7 @@ SESSION = sc.AppSession("chimerax", _launcher, discovery.find_chimerax)
 sc.register_skill_extras(mcp, "chimerax")
 from . import extra_tools  # noqa: E402
 extra_tools.register(mcp, SESSION)
+extra_tools.register_more(mcp, SESSION)
 
 
 @mcp.tool()

@@ -211,3 +211,113 @@ total = len(rows)
 rows = rows[%(off)d:%(off)d + %(n)d]
 result = {"spec": %(spec)r, "total": total, "offset": %(off)d, "rows": rows}
 '''
+
+
+def register_more(mcp, SESSION):
+    """Second wave of structured tools (audit items 5, 8, 9, 10)."""
+
+    @mcp.tool()
+    def set_view(matrix_3x4: Optional[list] = None, named_view: Optional[str] = None, field_of_view: Optional[float] = None) -> str:
+        """Set the camera: from a 3x4 matrix as returned by `get_view` (matrix_3x4, row-major), or a named view
+        saved with `view name <x>`. Symmetric with get_view so figures can be reproduced exactly."""
+        return sc.python_json(SESSION, CX_SET_VIEW % dict(m=matrix_3x4, nv=named_view, fov=field_of_view))
+
+    @mcp.tool()
+    def mutate(spec: str, residue: str, criteria: str = "d", preserve: bool = True) -> str:
+        """Point mutation with ChimeraX `swapaa` (rotamer library + criteria: "d" density/clash default,
+        "c" clashes, "h" H-bonds, "p" probability). `spec` must match exactly one residue (e.g. "#1/A:48");
+        `residue` three-letter code. Returns the new residue, rotamer info and clashes with neighbours."""
+        return sc.python_json(SESSION, CX_MUTATE % dict(spec=spec, res=residue.upper(), crit=criteria, preserve=bool(preserve)))
+
+    @mcp.tool()
+    def alignment_info(mobile: str, target: str, max_pairs: int = 400) -> str:
+        """Residue pairs that a matchmaker superposition would use for `mobile` onto `target` (runs matchmaker and
+        reports the paired residues with per-pair CA distances; the structures are moved as by `align`)."""
+        return sc.python_json(SESSION, CX_ALIGNMENT_INFO % dict(mobile=mobile, target=target, n=int(max_pairs)))
+
+    @mcp.tool()
+    def wait_for_jobs(timeout_seconds: float = 600.0, poll_seconds: float = 2.0) -> str:
+        """Block until ChimeraX background jobs (blastprotein, alphafold predict, modeller, boltz ...) finish, up to
+        the timeout. Returns the job list with states and the models that appeared meanwhile."""
+        return sc.python_json(SESSION, CX_WAIT_JOBS % dict(t=float(timeout_seconds), p=float(poll_seconds)), timeout=float(timeout_seconds) + 30)
+
+
+CX_SET_VIEW = r'''
+from chimerax.core.commands import run as _run
+m, nv, fov = %(m)r, %(nv)r, %(fov)r
+if nv:
+    _run(session, "view " + nv, log=False)
+elif m:
+    flat = [x for row in m for x in row]
+    if len(flat) != 12:
+        raise ValueError("matrix_3x4 must be 3 rows of 4 numbers")
+    _run(session, "view matrix camera " + ",".join("%%.6g" %% x for x in flat), log=False)
+else:
+    raise ValueError("give matrix_3x4 or named_view")
+if fov:
+    _run(session, "camera fieldOfView %%g" %% fov, log=False)
+c = session.main_view.camera
+result = {"position": [round(float(x), 3) for x in c.position.origin()], "matrix_3x4": [[round(float(x), 4) for x in row] for row in c.position.matrix],
+          "field_of_view": getattr(c, "field_of_view", None)}
+'''
+
+CX_MUTATE = r'''
+from chimerax.core.commands import run as _run, atomspec
+spec, res, crit, preserve = %(spec)r, %(res)r, %(crit)r, %(preserve)r
+o = atomspec.AtomSpecArg.parse(spec, session)[0].evaluate(session)
+rs = o.residues
+if len(rs) != 1:
+    raise ValueError("spec must match exactly one residue, matched %%d" %% len(rs))
+r0 = rs[0]
+before = "%%s %%s" %% (r0.name, r0.number)
+_run(session, "swapaa %%s %%s criteria %%s preserve %%s" %% (spec, res, crit, "true" if preserve else "false"), log=False)
+o2 = atomspec.AtomSpecArg.parse(spec, session)[0].evaluate(session)
+r1 = o2.residues[0]
+clash_count = None
+try:
+    v = _run(session, "clashes %%s restrict cross reveal false log false" %% spec, log=False)
+    clash_count = int(sum(len(x) for x in v.values())) if isinstance(v, dict) else None
+except Exception:
+    pass
+result = {"spec": spec, "from": before, "to": "%%s %%s" %% (r1.name, r1.number), "atoms_now": int(len(r1.atoms)), "criteria": crit, "clashing_atom_pairs": clash_count}
+'''
+
+CX_ALIGNMENT_INFO = r'''
+import numpy as np
+from chimerax.core.commands import run as _run
+mobile, target, n = %(mobile)r, %(target)r, %(n)d
+r = _run(session, "matchmaker %%s to %%s" %% (mobile, target), log=False)
+res = r[0] if isinstance(r, (list, tuple)) and r else r
+ma, ra = res.get("final match atoms"), res.get("final ref atoms")
+pairs = []
+if ma is not None and ra is not None:
+    d = np.linalg.norm(ma.scene_coords - ra.scene_coords, axis=1)
+    for a, b, dist in zip(ma, ra, d):
+        pairs.append({"mobile": "#%%s/%%s:%%s%%d" %% (a.structure.id_string, a.residue.chain_id, a.residue.name, a.residue.number),
+                      "target": "#%%s/%%s:%%s%%d" %% (b.structure.id_string, b.residue.chain_id, b.residue.name, b.residue.number), "distance": round(float(dist), 2)})
+result = {"mobile": mobile, "target": target, "rmsd": round(float(res.get("final RMSD", 0)), 3) if isinstance(res, dict) else None,
+          "pairs_total": len(pairs), "pairs": pairs[:n], "worst_pairs": sorted(pairs, key=lambda p: -p["distance"])[:10]}
+'''
+
+CX_WAIT_JOBS = r'''
+import time
+t_max, poll = %(t)f, %(p)f
+before = set(m.id_string for m in session.models.list())
+def jobs():
+    out = []
+    try:
+        for j in session.tasks.list():
+            out.append({"id": getattr(j, "id", None), "name": str(j), "state": getattr(j, "state", None), "done": bool(getattr(j, "terminated", lambda: False)())})
+    except Exception as e:
+        out.append({"error": str(e)})
+    return out
+t0 = time.time()
+while time.time() - t0 < t_max:
+    js = jobs()
+    running = [j for j in js if not j.get("done") and "error" not in j]
+    if not running:
+        break
+    time.sleep(poll)
+after = set(m.id_string for m in session.models.list())
+result = {"waited_s": round(time.time() - t0, 1), "jobs": jobs(), "new_models": sorted(after - before), "timed_out": time.time() - t0 >= t_max}
+'''

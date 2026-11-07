@@ -469,6 +469,20 @@ def register_skill_extras(mcp, app: str):
     except Exception:
         pass
     try:
+        # one prompt per built-in skill so Claude Code lists them as /mcp__<app>__<skill-name>
+        for s0 in sk.list_skills(app):
+            def _make(name):
+                def _p(task: str = "") -> str:
+                    s1 = sk.get_skill(app, name)
+                    return "Follow these %s instructions:\n\n%s\n\nTask: %s" % (app, s1["body"] if s1 else "", task or "as discussed")
+                return _p
+            try:
+                mcp.prompt(name=s0["name"].replace("-", "_"), description=s0["description"] or s0["title"])(_make(s0["name"]))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
         @mcp.prompt(name="use_skill", description="Load a %s skill and follow it for the given task" % app)
         def _use_skill(skill: str, task: str = "") -> str:  # pragma: no cover
             s = sk.get_skill(app, skill)
