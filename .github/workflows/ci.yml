@@ -179,6 +179,41 @@ jobs:
                       assert a.get("coverage", 0) > 0.001, r1
           asyncio.run(go())
           PY
+      - name: bisect the ID pass on this OpenGL (each ingredient as its own call, liveness checked)
+        shell: bash
+        run: |
+          mkdir -p ci-out; exec > >(tee -a ci-out/bisect.txt) 2>&1
+          .venv/Scripts/python.exe - <<'PY'
+          import asyncio, os, sys, json, time
+          sys.path.insert(0, "tests")
+          from e2e_mcp_client import stdio_client, StdioServerParameters, ClientSession, text_of
+          PIECES = [
+            ("flat settings set+restore", "import sys; sys.path.insert(0, %r)\nimport molmcp_pymol_bridge as B\nsaved={s: B._setting_value(s) for s in B.FLAT_RENDER_SETTINGS}\n[cmd.set(s, v, quiet=1) for s, v in B.FLAT_RENDER_SETTINGS.items()]\n[cmd.set(s, v, quiet=1) for s, v in saved.items() if v is not None]\nresult='ok'" % os.path.abspath("molmcp/inapp/pymol")),
+            ("bg + transparency settings", "cmd.set('bg_rgb', [0.0,0.0,0.0], quiet=1); cmd.set('transparency', 0, quiet=1); cmd.set('bg_rgb', [0.0,0.0,0.0], quiet=1); result='ok'"),
+            ("scene store/recall/clear", "cmd.scene('_t', 'store', view=0, active=1, color=1, rep=1, frame=0, quiet=1); cmd.scene('_t', 'recall', animate=0, quiet=1); cmd.scene('_t', 'clear', quiet=1); result='ok'"),
+            ("set_color + color + unset", "cmd.set_color('_c0', [0.5,0.5,0.9], quiet=1); cmd.color('_c0', '(%ala)', quiet=1); cmd.unset('cartoon_color', '(%ala)', quiet=1); result='ok'"),
+            ("ray png 320x240 via _png", "import sys; sys.path.insert(0, %r)\nimport molmcp_pymol_bridge as B\nd=B._png(320, 240, 0, -1, False); result=len(d)" % os.path.abspath("molmcp/inapp/pymol")),
+            ("sleep 2 s (let the GUI repaint)", "import time; time.sleep(2); result='ok'"),
+            ("full op_render_ids", "import sys; sys.path.insert(0, %r)\nimport molmcp_pymol_bridge as B\nr=B.op_render_ids({'items': [{'label': 'ala', 'selection': '%%ala', 'rgb': [250, 70, 70]}], 'width': 320, 'height': 240, 'solo': False})\nresult={'png': len(r['png']), 'errors': r['errors'], 'fallback': r.get('fallback')}" % os.path.abspath("molmcp/inapp/pymol")),
+            ("sleep 2 s again", "import time; time.sleep(2); result='ok'"),
+          ]
+          async def go():
+              p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/pymol-mcp.exe"), args=[], env=dict(os.environ))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      for name, code in PIECES:
+                          try:
+                              res = json.loads(text_of(await s.call_tool("python", {"code": code})))
+                              print("PIECE", name, "->", "ok" if res.get("ok") else "ERR", str(res.get("result", res.get("error")))[:160], flush=True)
+                          except Exception as e:
+                              print("PIECE", name, "-> EXC", str(e)[:200], flush=True)
+                          st = json.loads(text_of(await s.call_tool("status", {})))
+                          print("   alive:", st.get("connected"), flush=True)
+                          if not st.get("connected"):
+                              print("PROCESS DIED after:", name); return
+          asyncio.run(go())
+          PY
       - name: layout (ID pass) through the GUI
         shell: bash
         run: |
@@ -226,8 +261,10 @@ jobs:
           parts = []
           for f in sorted(glob.glob("ci-out/*.txt")):
               txt = open(f, errors="replace").read().strip()
-              if f.endswith("render.txt") or f.endswith("layout.txt"):
-                  txt = txt[-1200:]
+              if f.endswith("bisect.txt"):
+                  txt = txt[-1500:]
+              elif f.endswith("render.txt") or f.endswith("layout.txt"):
+                  txt = txt[-600:]
               else:
                   txt = txt[-300:]
               parts.append("[%s] %s" % (os.path.basename(f)[:-4], " ".join(txt.split())))
