@@ -1,0 +1,12 @@
+# Linux smoke test: open-source PyMOL (conda-forge) + molmcp, headless library mode, no display.
+FROM mambaorg/micromamba:1.5.8
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv python3-pip git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN micromamba install -y -n base -c conda-forge python=3.11 pymol-open-source numpy pillow && micromamba clean -a -y
+ENV PATH=/opt/conda/bin:$PATH
+WORKDIR /work
+COPY . /work/mol-mcp
+# the MCP server venv uses the distro python (3.10+), PyMOL comes from conda
+RUN cd /work/mol-mcp && rm -rf .venv && python3 -m venv .venv && .venv/bin/pip install -q -e .
+ENV HOME=/root MOLMCP_HOME=/root/.molmcp
+CMD ["bash", "/work/mol-mcp/tests/docker/linux_smoke_pymol.sh"]

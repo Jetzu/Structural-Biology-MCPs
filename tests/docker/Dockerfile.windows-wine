@@ -1,0 +1,29 @@
+# Windows code-path test without a Windows machine: the official Windows build of CPython and the open-source
+# PyMOL Windows wheel running under Wine in a Linux container.  Exercises sys.platform == "win32" paths:
+# .venv\Scripts\*.exe console scripts, %APPDATA% plugin dir, Windows config paths, process-creation flags.
+#   docker build --platform linux/amd64 -f tests/docker/Dockerfile.windows-wine -t molmcp-windows-wine .
+#   docker run --rm --platform linux/amd64 molmcp-windows-wine
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive WINEDEBUG=-all WINEARCH=win64 WINEPREFIX=/root/.wine WINEDLLOVERRIDES="mscoree,mshtml="
+RUN apt-get update && apt-get install -y --no-install-recommends wine64 wine winbind ca-certificates curl xvfb xauth && rm -rf /var/lib/apt/lists/*
+RUN xvfb-run -a wineboot --init && sleep 3
+# portable 64-bit CPython 3.11 (NuGet package: plain zip with Lib, DLLs, pip and venv; no installer needed).
+# 3.11 rather than 3.12 because 3.12 file copies call KERNEL32.CopyFile2, which Wine 9 does not implement.
+RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* \
+ && curl -sSL -o /tmp/py.nupkg https://www.nuget.org/api/v2/package/python/3.11.9 \
+ && mkdir -p /tmp/pynuget && unzip -q /tmp/py.nupkg -d /tmp/pynuget && mkdir -p /root/.wine/drive_c \
+ && mv /tmp/pynuget/tools /root/.wine/drive_c/Py311 && rm -rf /tmp/py.nupkg /tmp/pynuget \
+ && wine 'C:\\Py311\\python.exe' -m ensurepip --default-pip >/dev/null 2>&1 || true \
+ && wine 'C:\\Py311\\python.exe' --version && wine 'C:\\Py311\\python.exe' -m pip --version
+# Wine 9 lacks ucrtbase.crealf (used by numpy >= 2 at import) -> pin numpy 1.x and an older Pillow for the test
+COPY tests/docker/wine-constraints.txt /etc/pip-constraints.txt
+ENV PIP_CONSTRAINT=/etc/pip-constraints.txt
+RUN curl -sSL -o /tmp/pymol-3.2.0a0-cp311-cp311-win_amd64.whl https://github.com/cgohlke/pymol-open-source-wheels/releases/download/v2026.4.5/pymol-3.2.0a0-cp311-cp311-win_amd64.whl \
+ && wine 'C:\Py311\python.exe' -m pip install --no-warn-script-location -q setuptools wheel \
+ && wine 'C:\\Py311\\python.exe' -m pip install --no-warn-script-location --only-binary=:all: numpy pillow \
+ && wine 'C:\\Py311\\python.exe' -m pip install --no-warn-script-location --no-deps /tmp/pymol-3.2.0a0-cp311-cp311-win_amd64.whl && rm -f /tmp/pymol-*.whl \
+ && wine 'C:\Py311\python.exe' -c "import pymol, pymol2, sys; print('pymol import ok on', sys.platform)"
+WORKDIR /work
+COPY . /work/mol-mcp
+ENV PYMOL_PYTHON='C:\Py311\python.exe'
+CMD ["bash", "/work/mol-mcp/tests/docker/wine_smoke_pymol.sh"]
