@@ -172,7 +172,17 @@ result = {"cutoff": cut, "polar_only": polar, "atom_pairs": len(pairs), "residue
 PYMOL_SAVE = r'''
 import os
 p = cmd.exp_path(%(path)r)
-cmd.save(p, %(sel)r, state=%(state)d, format=%(fmt)r or "")
+if cmd.count_atoms(%(sel)r) == 0 and not p.lower().endswith((".pse", ".pze", ".png")):
+    raise ValueError("selection %%r matches no atoms" %% %(sel)r)
+st = %(state)d
+if st > 0:
+    mx = max([cmd.count_states(o) for o in (cmd.get_object_list("(" + %(sel)r + ")") or [])] or [0])
+    if st > mx:
+        raise ValueError("state %%d does not exist (objects in the selection have at most %%d states)" %% (st, mx))
+d = os.path.dirname(p)
+if d and not os.path.isdir(d):
+    raise ValueError("directory does not exist: %%s" %% d)
+cmd.save(p, %(sel)r, state=st, format=%(fmt)r or "")
 result = {"path": os.path.abspath(p), "bytes": os.path.getsize(p) if os.path.exists(p) else None}
 '''
 

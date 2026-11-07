@@ -19,6 +19,19 @@ launched, so GUI-specific statements come from reading the source and the shippe
 > both apps) are implemented too, plus PyMOL `measure(kind="sasa")`, `set_setting`, and one MCP prompt per skill
 > (`/mcp__pymol__publication_rendering` style in Claude Code).
 
+> **Red-team QA (same day):** 24 scenario testers (16 PyMOL on isolated headless instances, 8 ChimeraX) filed
+> 113 reports (17 critical, 22 major, 74 minor). Fixed: a positional-argument slip in both servers' `run` wrapper
+> (`allow_dangerous` landed in `timeout`, `json=True` bypassed the guard), guard bypass via `;` and command
+> abbreviations, auto-launching a second window when a bridge was merely busy, silent fallback when the pinned
+> window was gone, the ID-pass palette starting near black (background attributed to item 1) and ChimeraX items
+> recolouring whole structures / resetting partial selections, headless PyMOL ignoring `transparent=False`, missing
+> size limits (huge renders killed PyMOL), unvalidated `measure`/`mutate`/paging arguments, `swapaa preserve`
+> syntax, `alignment_info` listing atoms instead of residue pairs, unordered ChimeraX residue tables, raw colour
+> indices in `set_setting`, missing representation/movie changes in `changes`, loops excluded from secondary
+> structure fractions, headless `log` empty, `compare_renders` failing in a fresh server process, ChimeraX
+> `commands`/`help` import, volume statistics, duplicated python output, and more. Remaining minor items are
+> documented in the tool docstrings (e.g. width/height 0 = window size).
+
 ## 1. Short answer
 
 * **Reach is essentially complete for everything that has a command or a Python API.**  The `run` tool executes the

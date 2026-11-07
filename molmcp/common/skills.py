@@ -49,7 +49,7 @@ def _parse(path: str) -> Optional[dict]:
         "title": meta.get("title") or name.replace("-", " ").title(),
         "app": meta.get("app") or os.path.basename(os.path.dirname(path)),
         "description": meta.get("description", ""),
-        "tags": [t.strip() for t in meta.get("tags", "").split(",") if t.strip()],
+        "tags": [t.strip().strip("'\"") for t in meta.get("tags", "").strip().strip("[]").split(",") if t.strip().strip("'\"")],
         "path": path,
         "body": body.strip(),
         "source": "user" if path.startswith(os.path.abspath(user_skills_dir())) else "builtin",

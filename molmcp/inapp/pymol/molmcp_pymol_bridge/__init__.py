@@ -491,7 +491,7 @@ def op_python(args):
     t0 = time.time()
     try:
         exec(compile(code, "<molmcp>", "exec"), ns, ns)
-    except Exception as e:
+    except (Exception, SystemExit, KeyboardInterrupt) as e:
         error = "%s: %s" % (type(e).__name__, e)
         tb = traceback.format_exc()
     finally:
@@ -745,8 +745,13 @@ def op_get_view(args):
 def op_set_view(args):
     cmd = _cmd()
     view = args.get("view")
-    if view and len(view) == 18:
-        cmd.set_view([float(x) for x in view])
+    if not view or len(view) != 18:
+        raise ValueError("view must be a list of 18 numbers (as returned by get_view)")
+    import math
+    vals = [float(x) for x in view]
+    if any(math.isnan(v) or math.isinf(v) for v in vals):
+        raise ValueError("view contains non-finite values")
+    cmd.set_view(vals)
     if args.get("animate"):
         pass
     return _view_dict(cmd.get_view())
@@ -960,7 +965,7 @@ def op_help(args):
     kw = cmd.keyword.get(name)
     if not kw:
         import difflib
-        close = difflib.get_close_matches(name, list(cmd.keyword.keys()), n=8)
+        close = difflib.get_close_matches(name, [k for k in cmd.keyword.keys() if not k.startswith("_")], n=8)
         return {"found": False, "suggestions": close}
     fn = kw[0]
     return {"found": True, "command": name, "doc": (fn.__doc__ or "").strip()}
@@ -969,7 +974,7 @@ def op_help(args):
 def op_commands(args):
     cmd = _cmd()
     prefix = args.get("prefix", "")
-    names = sorted(k for k in cmd.keyword.keys() if k.startswith(prefix) and not k.startswith("_"))
+    names = sorted(k for k in cmd.keyword.keys() if k.lower().startswith(prefix.lower()) and not k.startswith("_"))
     return {"commands": names, "count": len(names)}
 
 

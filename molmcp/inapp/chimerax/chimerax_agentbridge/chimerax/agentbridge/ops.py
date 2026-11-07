@@ -399,7 +399,7 @@ def op_python(session, args):
     t0 = time.time()
     try:
         exec(compile(code, "<molmcp>", "exec"), ns, ns)
-    except Exception as e:
+    except (Exception, SystemExit, KeyboardInterrupt) as e:
         error = "%s: %s" % (type(e).__name__, e)
         tb = traceback.format_exc()
     finally:
@@ -1038,7 +1038,7 @@ def _registered_commands():
 
 def op_commands(session, args):
     prefix = args.get("prefix", "")
-    names = sorted(n for n in _registered_commands() if n.startswith(prefix))
+    names = sorted(n for n in _registered_commands() if n.lower().startswith(prefix.lower()))
     return {"commands": names, "count": len(names)}
 
 

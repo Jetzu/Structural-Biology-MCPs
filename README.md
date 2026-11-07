@@ -25,9 +25,11 @@ runs *inside* the viewer (a PyMOL plugin / a ChimeraX bundle), so the agent gets
   exactly like `/model` in Claude Code; providers whose CLI is not installed are greyed out, so a Claude-only or
   Codex-only setup just works.  Slash commands: `/model`, `/clear`, `/claude`, `/codex`, `/skills`, `/stop`,
   `/help`; Enter sends, Shift+Enter newline, Esc interrupts, ↑/↓ history, Tab accepts a suggestion.
-* **Skills** — instruction files the agent reads on demand (`skills`, `skill`), covering publication rendering,
-  representations and colouring, selections / atom specs, surfaces and electrostatics, alignment, movies, maps and
-  cryo-EM, ligand sites, hydrogen bonds and contacts, AlphaFold, sessions and export.  Add your own recipes under
+* **Skills** — 41 reviewed instruction files the agent reads on demand (`skills`, `skill`): publication rendering,
+  representations and colouring, selections / atom specs, surfaces and electrostatics, alignment, movies and
+  trajectories, maps and cryo-EM, ligand sites and docking poses, hydrogen bonds / contacts / interfaces, AlphaFold,
+  mutagenesis, symmetry and assemblies, markers, attributes, presets and lighting, multi-panel figures, large
+  systems, sessions and export.  Add your own recipes under
   `~/.molmcp/skills/<app>/` (or let the agent store one with `save_skill`); user files override built-ins.
 * **Structured helpers** for the questions agents ask most: `measure` (distance/angle/dihedral/extent/RMSD/count/SASA),
   `align` + `alignment_info` (RMSD, atom counts and the residue pairs behind them), `sequence`, `contacts` (residue
@@ -179,7 +181,8 @@ Claude Code / Codex ──stdio──> pymol-mcp ──HTTP (127.0.0.1, token)�
 | PyMOL headless (library mode, ray renders) | tested | tested, open-source PyMOL 3.1 via conda-forge | tested under Wine: win32 Python 3.11 + PyMOL 3.2 wheel; server, tools list, headless launch, run/scene/render |
 | PyMOL plugin install through PyMOL's plugin prefs | tested | tested | tested under Wine (`%APPDATA%\pymol\startup`, PyMOL prefs updated) |
 | Installer: venv, `.exe` console scripts, Claude/Codex config files | tested | tested | tested under Wine (`.venv\Scripts\pymol-mcp.exe`, `C:\users\...\.claude.json`, `.codex\config.toml`) |
-| Unit + platform tests | pass (37) | pass | pass under Windows Python 3.11 (34 at the time, 1 skipped) |
+| Unit + platform tests | pass (39) | pass | pass under Windows Python 3.11 (34 at the time, 1 skipped) |
+| Red-team QA: 24 scenario agents, 113 reports, confirmed defects fixed (see docs/FEATURE_COVERAGE.md) | done | partially (PyMOL headless scenarios also ran on the Mac) | not run |
 | ChimeraX GUI: run / scene / render / layout / events / compare | tested, ChimeraX 1.11.1 | n/a (no display) | not tested |
 | ChimeraX headless `--nogui --offscreen`: launch via MCP, run / scene / offscreen render / layout / events / compare | not possible on macOS (verified: "running without graphics") | tested as a normal user in UCSF's official `ucsfrbvi/chimerax` image (arm64, ChimeraX 1.13 dev) | not possible |
 | ChimeraX bundle install via `toolshed install` + autostart of the bridge + `agent`/`claude`/`codex` commands | tested | tested (same image; note: ChimeraX redirects root's data dir, so run as a normal user) | not tested |
