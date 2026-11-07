@@ -54,7 +54,10 @@ launched, so GUI-specific statements come from reading the source and the shippe
 > carries error text; stale discovery files whose pid was reused are purged (process start time); fetched files
 > go to `$MOLMCP_HOME/fetch` instead of the process cwd; ChimeraX `model_info` lists surface colours and
 > transparency and the command echo is stripped even when ChimeraX normalises the text. The 18-chain ID pass of
-> the earlier report now takes 1.2 s (3.7 s with occlusion).
+> the earlier report now takes 1.2 s (3.7 s with occlusion). **Windows:** a GitHub Actions job on `windows-latest` now runs the installer, the 44 unit
+> tests and the MCP stdio client end to end against `pymol-mcp`, which launches a headless open-source PyMOL on
+> the runner (the stdio disconnect seen under Wine was a Wine artefact). ChimeraX on Windows remains untested
+> (licence click-through).
 
 ## 1. Short answer
 

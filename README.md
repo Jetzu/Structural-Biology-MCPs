@@ -190,19 +190,19 @@ Claude Code / Codex ──stdio──> pymol-mcp ──HTTP (127.0.0.1, token)�
 | | macOS (this build) | Linux (x86_64 container) | Windows |
 |---|---|---|---|
 | PyMOL GUI: run / scene / render / layout / events / compare | tested, PyMOL 3.1.5 | n/a (no display) | not tested (no Windows machine) |
-| PyMOL headless (library mode, ray renders) | tested | tested, open-source PyMOL 3.1 via conda-forge | tested under Wine: win32 Python 3.11 + PyMOL 3.2 wheel; server, tools list, headless launch, run/scene/render |
-| PyMOL plugin install through PyMOL's plugin prefs | tested | tested | tested under Wine (`%APPDATA%\pymol\startup`, PyMOL prefs updated) |
-| Installer: venv, `.exe` console scripts, Claude/Codex config files | tested | tested | tested under Wine (`.venv\Scripts\pymol-mcp.exe`, `C:\users\...\.claude.json`, `.codex\config.toml`) |
-| Unit + platform tests | pass (44) | pass | pass under Windows Python 3.11 (34 at the time, 1 skipped) |
+| PyMOL headless (library mode, ray renders) | tested | tested, open-source PyMOL 3.1 via conda-forge | **tested on a real Windows runner (GitHub Actions `windows-latest`, Python 3.11 + open-source PyMOL 3.2 wheel): MCP stdio client -> server -> headless PyMOL launched by the server, run/scene/render/quit** ([ci.yml](.github/workflows/ci.yml)); also under Wine |
+| PyMOL plugin install through PyMOL's plugin prefs | tested | tested | tested on the Windows runner and under Wine (`%APPDATA%\pymol\startup`, PyMOL prefs updated) |
+| Installer: venv, `.exe` console scripts, Claude/Codex config files | tested | tested | tested on the Windows runner and under Wine (`.venv\Scripts\pymol-mcp.exe`, `%USERPROFILE%\.claude.json`, `.codex\config.toml`) |
+| Unit + platform tests | pass (44) | pass (GitHub Actions `ubuntu-latest`) | pass (44, GitHub Actions `windows-latest`) |
 | Red-team QA: 24 scenario agents, 113 reports, confirmed defects fixed (see docs/FEATURE_COVERAGE.md) | done | partially (PyMOL headless scenarios also ran on the Mac) | not run |
-| ChimeraX GUI: run / scene / render / layout / events / compare | tested, ChimeraX 1.11.1 | n/a (no display) | not tested |
+| ChimeraX GUI: run / scene / render / layout / events / compare | tested, ChimeraX 1.11.1 | n/a (no display) | not tested (the ChimeraX installer needs a manual licence click-through, so it cannot run on CI) |
 | ChimeraX headless `--nogui --offscreen`: launch via MCP, run / scene / offscreen render / layout / events / compare | not possible on macOS (verified: "running without graphics") | tested as a normal user in UCSF's official `ucsfrbvi/chimerax` image (arm64, ChimeraX 1.13 dev) | not possible |
 | ChimeraX bundle install via `toolshed install` + autostart of the bridge + `agent`/`claude`/`codex` commands | tested | tested (same image; note: ChimeraX redirects root's data dir, so run as a normal user) | not tested |
 | Claude Code registration (`claude mcp list` → Connected) | tested | config written and parsed | not tested |
 | Codex CLI live session calling the tools (`codex exec` → launch/run/layout/render on both servers) | tested, Codex CLI 0.160.0 | config written and parsed | not tested |
 | Claude Code live session calling the tools (`claude -p` → launch/run/layout/render on both servers) | tested, Claude Code 2.1.319 | not run | not tested |
 | In-app chat: PyMOL `claude`/`codex` commands and dock; ChimeraX `claude`/`codex` commands and tool panel, both backends changing the live scene | tested | not run | not tested |
-| Platform-simulation tests (`tests/test_platform.py`) | pass | pass | Windows branches exercised by simulation only |
+| Platform-simulation tests (`tests/test_platform.py`) | pass | pass | pass natively on the Windows runner |
 
 Windows was exercised with the real Windows build of CPython and the Windows PyMOL wheel running under Wine in a
 Linux container (`tests/docker/Dockerfile.windows-wine`): the `win32` code paths (path discovery, `.exe` console
