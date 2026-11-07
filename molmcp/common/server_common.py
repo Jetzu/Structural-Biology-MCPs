@@ -370,7 +370,7 @@ def render(sess: AppSession, width: int, height: int, path: Optional[str], retur
     else:
         sess.renders.append(saved)
     out: Dict[str, Any] = {"path": saved, "render_ms": r.get("ms"), "background": _named_color(r["background"]["rgb"])}
-    for k in ("ray", "transparent", "viewport", "window"):
+    for k in ("ray", "transparent", "viewport", "window", "fallback"):
         if k in r:
             out[k] = r[k]
     if analyze:

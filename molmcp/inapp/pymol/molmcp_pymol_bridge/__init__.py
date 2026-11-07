@@ -953,18 +953,35 @@ def op_set_view(args):
     return _view_dict(cmd.get_view())
 
 
+_LAST_PNG_FALLBACK = None
+
+
 def _png(width, height, ray, dpi, transparent):
+    """PNG bytes of the current view.  GUI: offscreen draw + "prior" image; when that yields nothing (no usable
+    OpenGL: remote desktop, VM, CI runner) the ray tracer is used instead, which needs no OpenGL at all."""
+    global _LAST_PNG_FALLBACK
     cmd = _cmd()
+    _LAST_PNG_FALLBACK = None
     saved = {}
     for s in ("ray_opaque_background", "opaque_background"):
         saved[s] = _setting_value(s)
         cmd.set(s, 0 if transparent else 1)
     try:
+        data = None
         if is_gui() and not ray:
             # In the Qt GUI an in-memory PNG at an explicit size is only available
             # as the "prior" image of an offscreen draw.
-            cmd.draw(int(width or 0), int(height or 0), antialias=-1, quiet=1)
-            data = cmd.png("", 0, 0, float(dpi or -1), 0, quiet=1, prior=1)
+            try:
+                cmd.draw(int(width or 0), int(height or 0), antialias=-1, quiet=1)
+                data = cmd.png("", 0, 0, float(dpi or -1), 0, quiet=1, prior=1)
+            except Exception as e:
+                data = None
+                _LAST_PNG_FALLBACK = "offscreen draw failed (%s)" % str(e).strip().splitlines()[0] if str(e).strip() else "offscreen draw failed"
+            if not data:
+                _LAST_PNG_FALLBACK = _LAST_PNG_FALLBACK or "offscreen draw returned no image (no usable OpenGL?)"
+                data = cmd.png("", int(width or 0), int(height or 0), float(dpi or -1), 1, quiet=1)
+                if data:
+                    _LAST_PNG_FALLBACK += "; rendered with the ray tracer instead"
         else:
             data = cmd.png("", int(width or 0), int(height or 0), float(dpi or -1), int(ray), quiet=1)
     finally:
@@ -1016,9 +1033,12 @@ def op_render(args):
     bg, bg_name = _background_rgb()
     if _bridge:
         _bridge.events.add("agent_render", width=width, height=height, ray=ray)
-    return {"png": data, "path": path, "ray": bool(ray), "background": {"rgb": bg, "name": bg_name},
-            "transparent": transparent, "ms": round((time.time() - t0) * 1000, 1), "viewport": list(cmd.get_viewport()),
-            "width": width, "height": height, "watermark": _unlicensed()}
+    out = {"png": data, "path": path, "ray": bool(ray) or bool(_LAST_PNG_FALLBACK), "background": {"rgb": bg, "name": bg_name},
+           "transparent": transparent, "ms": round((time.time() - t0) * 1000, 1), "viewport": list(cmd.get_viewport()),
+           "width": width, "height": height, "watermark": _unlicensed()}
+    if _LAST_PNG_FALLBACK:
+        out["fallback"] = _LAST_PNG_FALLBACK
+    return out
 
 
 def op_render_ids(args):
@@ -1217,9 +1237,12 @@ def op_render_ids(args):
                 pass
         cmd.scene("_molmcp_idpass", "recall", animate=0, quiet=1)
         cmd.scene("_molmcp_idpass", "clear", quiet=1)
-    return {"png": composite, "solo": solos, "legend": {"#%02x%02x%02x" % tuple(it["rgb"]): it["label"] for it in items},
-            "errors": errors, "width": width, "height": height, "watermark": _unlicensed(),
-            "ms": round((time.time() - t_start) * 1000, 1)}
+    out = {"png": composite, "solo": solos, "legend": {"#%02x%02x%02x" % tuple(it["rgb"]): it["label"] for it in items},
+           "errors": errors, "width": width, "height": height, "watermark": _unlicensed(),
+           "ms": round((time.time() - t_start) * 1000, 1)}
+    if _LAST_PNG_FALLBACK:
+        out["fallback"] = _LAST_PNG_FALLBACK
+    return out
 
 
 def op_events(args):
