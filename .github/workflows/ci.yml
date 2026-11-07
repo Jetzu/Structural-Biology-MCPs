@@ -91,7 +91,8 @@ jobs:
 
   windows-pymol-gui:
     permissions:
-      contents: write
+      contents: read
+      statuses: write
     # Best-effort GUI path on the Windows runner: PyMOL's Qt window with the plugin started via -r, driven through
     # the MCP server (render uses the GUI draw/png path).  Runners expose only a basic software OpenGL, so this
     # job documents whether the GUI bridge works there; it does not gate the headless job above.
@@ -214,19 +215,41 @@ jobs:
           asyncio.run(q())
           PY
 
-      - name: Publish the step outputs to the ci-logs branch (readable without admin rights)
+      - name: Publish the step outputs as commit statuses (readable without admin rights)
         if: always()
         shell: bash
-        run: |
-          mkdir -p ci-out
-          cp pymol_gui.log ci-out/ 2>/dev/null || true
-          ls "$USERPROFILE/.molmcp/renders" > ci-out/renders.txt 2>/dev/null || true
-          git config user.name "ci-bot"; git config user.email "ci@users.noreply.github.com"
-          rm -rf /tmp/cilogs && mkdir -p /tmp/cilogs && cp -r ci-out /tmp/cilogs/ && cd /tmp/cilogs
-          git init -q && git checkout -q -b ci-logs && git add -A && git commit -q -m "windows-pymol-gui logs for $GITHUB_SHA ($GITHUB_RUN_ID)"
-          git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-logs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'PY'
+          import glob, json, os, urllib.request
+          parts = []
+          for f in sorted(glob.glob("ci-out/*.txt")):
+              txt = open(f, errors="replace").read().strip()
+              if f.endswith("render.txt") or f.endswith("layout.txt"):
+                  txt = txt[-1200:]
+              else:
+                  txt = txt[-300:]
+              parts.append("[%s] %s" % (os.path.basename(f)[:-4], " ".join(txt.split())))
+          try:
+              g = open("pymol_gui.log", errors="replace").read().strip()
+              parts.append("[pymol_gui.log] " + " ".join(g[-600:].split()))
+          except Exception:
+              pass
+          blob = " || ".join(parts)
+          chunks = [blob[i:i + 138] for i in range(0, min(len(blob), 138 * 25), 138)]
+          sha, repo, tok = os.environ["GITHUB_SHA"], os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_TOKEN"]
+          for n, c in enumerate(chunks):
+              body = json.dumps({"state": "success", "context": "ci-gui-log/%02d" % n, "description": c}).encode()
+              req = urllib.request.Request("https://api.github.com/repos/%s/statuses/%s" % (repo, sha), data=body,
+                                           headers={"Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json",
+                                                    "Content-Type": "application/json"})
+              try:
+                  urllib.request.urlopen(req, timeout=30).read()
+              except Exception as e:
+                  print("status post failed:", e); break
+          print("posted", len(chunks), "status chunks")
+          PY
 
   linux-unit:
     runs-on: ubuntu-latest
