@@ -1058,6 +1058,63 @@ def op_render(args):
     return out
 
 
+def _state_snapshot(objects, reps=True):
+    """Per-atom colours (and representation flags), enabled objects and the view, without `cmd.scene`
+    (storing a scene renders a thumbnail through the GUI draw path, which crashes PyMOL on OpenGL 1.1)."""
+    cmd = _cmd()
+    snap = {"view": list(cmd.get_view()), "enabled": list(cmd.get_names("objects", enabled_only=1)),
+            "colors": {}, "reps": {}}
+    for o in objects:
+        try:
+            if cmd.get_type(o) != "object:molecule":
+                continue
+            cols, rp = [], []
+            cmd.iterate("%" + o, "_c.append(color); _r.append(reps)", space={"_c": cols, "_r": rp})
+            snap["colors"][o] = cols
+            if reps:
+                snap["reps"][o] = rp
+        except Exception:
+            pass
+    return snap
+
+
+def _state_restore(snap):
+    cmd = _cmd()
+    for o, cols in snap.get("colors", {}).items():
+        try:
+            if cmd.count_atoms("%" + o) == len(cols):
+                it = iter(cols)
+                cmd.alter("%" + o, "color = _it.__next__()", space={"_it": it})
+        except Exception:
+            pass
+    for o, rp in snap.get("reps", {}).items():
+        try:
+            if cmd.count_atoms("%" + o) == len(rp):
+                it = iter(rp)
+                cmd.alter("%" + o, "reps = _it.__next__()", space={"_it": it})
+        except Exception:
+            pass
+    try:
+        cmd.recolor()
+        if snap.get("reps"):
+            cmd.rebuild()
+    except Exception:
+        pass
+    enabled = set(snap.get("enabled", []))
+    for o in cmd.get_names("objects"):
+        try:
+            if o in enabled:
+                cmd.enable(o)
+            else:
+                cmd.disable(o)
+        except Exception:
+            pass
+    try:
+        cmd.set_view(snap["view"])
+    except Exception:
+        pass
+
+
 def op_render_ids(args):
     """ID pass: draw every item in its own flat colour, restore everything afterwards."""
     cmd = _cmd()
@@ -1095,7 +1152,7 @@ def op_render_ids(args):
                 nonmol_colors[name] = cmd.get_object_color_index(name)
             except Exception:
                 nonmol_colors[name] = None
-    cmd.scene("_molmcp_idpass", "store", view=0, active=1, color=1, rep=1, frame=0, quiet=1)
+    snap = _state_snapshot(all_objects, reps=False)
     saved_global = {}
     obj_overrides = []           # (setting, object, value) to restore
     involved_objects = set()
@@ -1175,7 +1232,8 @@ def op_render_ids(args):
                 if it.get("label", str(i)) in errors:
                     continue
                 sel = "(%s)" % it["selection"]
-                cmd.scene("_molmcp_solo", "store", view=0, active=1, color=0, rep=1, frame=0, quiet=1)
+                solo_snap = _state_snapshot(all_objects, reps=True)
+                solo_snap["colors"] = {}        # colours are already the ID colours; only reps/enabled/view go back
                 try:
                     if i in nonmol:
                         objs_keep = {nonmol[i]}
@@ -1192,8 +1250,7 @@ def op_render_ids(args):
                 except Exception as e:
                     errors[it.get("label", str(i))] = "solo pass: " + (str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__)
                 finally:
-                    cmd.scene("_molmcp_solo", "recall", animate=0, quiet=1)
-                    cmd.scene("_molmcp_solo", "clear", quiet=1)
+                    _state_restore(solo_snap)
     finally:
         for i, it in enumerate(items):
             if i in nonmol:
@@ -1252,8 +1309,7 @@ def op_render_ids(args):
                     cmd.set(s, v, quiet=1)
             except Exception:
                 pass
-        cmd.scene("_molmcp_idpass", "recall", animate=0, quiet=1)
-        cmd.scene("_molmcp_idpass", "clear", quiet=1)
+        _state_restore(snap)
     out = {"png": composite, "solo": solos, "legend": {"#%02x%02x%02x" % tuple(it["rgb"]): it["label"] for it in items},
            "errors": errors, "width": width, "height": height, "watermark": _unlicensed(),
            "ms": round((time.time() - t_start) * 1000, 1)}
