@@ -68,6 +68,40 @@ jobs:
           asyncio.run(q())
           PY
 
+      - name: chimerax-mcp server on Windows (stdio client; app-independent tools, no ChimeraX installed)
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe - <<'PY'
+          import asyncio, os, sys, json, glob
+          sys.path.insert(0, "tests")
+          from e2e_mcp_client import stdio_client, StdioServerParameters, ClientSession, text_of
+          async def go():
+              p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/chimerax-mcp.exe"), args=[], env=dict(os.environ, MOLMCP_AUTOLAUNCH="0"))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      tools = [t.name for t in (await s.list_tools()).tools]
+                      print("tools:", len(tools), sorted(tools)[:12], "...")
+                      assert {"run", "scene", "render", "layout", "events", "skills", "measure", "mutate"} <= set(tools), tools
+                      st = json.loads(text_of(await s.call_tool("status", {})))
+                      print("status:", {k: st.get(k) for k in ("app", "connected", "executable", "hint")})
+                      assert st.get("app") == "chimerax" and not st.get("connected")
+                      sk = json.loads(text_of(await s.call_tool("skills", {})))
+                      names = [x["name"] for x in sk.get("skills", [])] if isinstance(sk, dict) else []
+                      print("skills:", len(names), names[:6])
+                      assert "publication-rendering" in names, sk
+                      body = text_of(await s.call_tool("skill", {"name": "publication-rendering"}))
+                      assert "render" in body.lower() and len(body) > 500
+                      pngs = sorted(glob.glob(os.path.join(os.path.expanduser("~"), ".molmcp", "renders", "*.png")))
+                      assert pngs, "no PNG from the PyMOL e2e found"
+                      a = json.loads(text_of(await s.call_tool("analyze_image", {"path": pngs[-1]})))
+                      print("analyze_image:", a.get("width"), a.get("height"), "coverage", a.get("coverage"), "palette", [x["name"] for x in a.get("palette", [])][:3])
+                      assert a.get("coverage", 0) > 0 and a.get("palette"), a
+                      r = json.loads(text_of(await s.call_tool("run", {"commands": ["open 1ubq"]})))
+                      print("run without ChimeraX:", r.get("error", "")[:120])
+                      assert r.get("ok") is False and "chimerax" in r.get("error", "").lower(), r
+          asyncio.run(go())
+          PY
       - name: Build the ChimeraX bundle wheel on Windows (no ChimeraX needed for the build) and list it
         shell: bash
         run: |
