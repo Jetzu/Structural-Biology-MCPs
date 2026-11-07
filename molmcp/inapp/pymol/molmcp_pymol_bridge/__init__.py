@@ -956,6 +956,20 @@ def op_set_view(args):
 _LAST_PNG_FALLBACK = None
 
 
+def _offscreen_draw_ok():
+    """Can the GUI draw offscreen?  PyMOL forces `use_shaders` off on contexts below OpenGL 2 (e.g. Microsoft's
+    "GDI Generic" 1.1 on VMs/remote desktops/CI runners); there `cmd.draw` crashes the process, so the CPU ray
+    tracer is used instead.  MOLMCP_PYMOL_FORCE_DRAW=1 / MOLMCP_PYMOL_FORCE_RAY=1 override the probe."""
+    if os.environ.get("MOLMCP_PYMOL_FORCE_DRAW") == "1":
+        return True
+    if os.environ.get("MOLMCP_PYMOL_FORCE_RAY") == "1":
+        return False
+    try:
+        return int(_cmd().get_setting_int("use_shaders")) == 1
+    except Exception:
+        return True
+
+
 def _png(width, height, ray, dpi, transparent):
     """PNG bytes of the current view.  GUI: offscreen draw + "prior" image; when that yields nothing (no usable
     OpenGL: remote desktop, VM, CI runner) the ray tracer is used instead, which needs no OpenGL at all."""
@@ -968,7 +982,10 @@ def _png(width, height, ray, dpi, transparent):
         cmd.set(s, 0 if transparent else 1)
     try:
         data = None
-        if is_gui() and not ray:
+        if is_gui() and not ray and not _offscreen_draw_ok():
+            _LAST_PNG_FALLBACK = "OpenGL without shader support (use_shaders off): rendered with the ray tracer"
+            data = cmd.png("", int(width or 0), int(height or 0), float(dpi or -1), 1, quiet=1)
+        elif is_gui() and not ray:
             # In the Qt GUI an in-memory PNG at an explicit size is only available
             # as the "prior" image of an offscreen draw.
             try:
