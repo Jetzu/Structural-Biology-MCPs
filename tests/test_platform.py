@@ -37,14 +37,18 @@ class TestDiscovery(unittest.TestCase):
     def test_instance_files_roundtrip(self):
         with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"MOLMCP_HOME": home}):
             d = discovery.instances_dir()
-            alive = {"app": "pymol", "pid": os.getpid(), "port": 1, "host": "127.0.0.1", "token": "t", "started": 2}
+            import time
+            alive = {"app": "pymol", "pid": os.getpid(), "port": 1, "host": "127.0.0.1", "token": "t", "started": time.time()}
             dead = dict(alive, pid=2 ** 22 - 1, started=1)
-            for name, info in (("pymol-1.json", alive), ("pymol-2.json", dead)):
+            reused = dict(alive, started=2)   # live pid, but the file predates the process: pid was reused
+            for name, info in (("pymol-1.json", alive), ("pymol-2.json", dead), ("pymol-3.json", reused)):
                 with open(os.path.join(d, name), "w") as f:
                     json.dump(info, f)
             found = discovery.list_instances("pymol")
             self.assertEqual([i["pid"] for i in found], [os.getpid()])
             self.assertFalse(os.path.exists(os.path.join(d, "pymol-2.json")))  # stale file removed
+            if discovery.pid_start_time(os.getpid()) is not None:
+                self.assertFalse(os.path.exists(os.path.join(d, "pymol-3.json")))  # reused pid: file removed
 
 
 class TestWindowsChimeraXConsole(unittest.TestCase):

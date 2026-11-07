@@ -32,6 +32,30 @@ launched, so GUI-specific statements come from reading the source and the shippe
 > `commands`/`help` import, volume statistics, duplicated python output, and more. Remaining minor items are
 > documented in the tool docstrings (e.g. width/height 0 = window size).
 
+> **Round 3 (restarted QA, same day):** the 9 scenarios and 2 skill writers lost in a session restart were re-run
+> (2 agents at a time), the 24 earlier reports on `layout`/`render`/`mutate`/`save_file`/`set_setting` were
+> regression-checked (19 fixed, 2 still open, 3 partial) and every new critical/major report was reproduced by an
+> independent skeptic before fixing. Fixed: **PyMOL 3.1 undo bug** - once the undo history is active, `delete`
+> + reloading the same object name leaves the live object unselectable after ~30 undoable commands (reproduced in
+> plain GUI PyMOL too; headless sessions now keep undo disabled, the GUI bridge clears the undo cache whenever an
+> agent command removed objects); headless command feedback (`Executive: RMSD = ...`) is written by PyMOL to the
+> C-level stdout and is now captured per command; `render(width=0,height=0)` returned PyMOL's cached image (now
+> the viewport size is passed explicitly); the licence banner an unlicensed/expired PyMOL burns into ray-traced
+> frames is detected (gated on `pymol.licensing`) and excluded from `render`/`layout`/`compare_renders` with a
+> `watermark` note; a single non-opaque pixel no longer flips the analysis into transparent mode; `layout` works
+> with mesh/surface/map objects (coloured by name, per-item errors instead of a failed call); `scene` reports mesh
+> colours and iso levels and survives a broken object; `changes` now include global settings, viewport, iso levels
+> (PyMOL) and atom/cartoon style changes (ChimeraX); the `run` guard no longer refuses `rms`/`rms_cur`;
+> `sequence` handles nucleotides and numbering ranges; `selection_info` keeps insertion codes; `residue_table`
+> rejects invalid selections and leaves `ss` empty for non-polymer residues; `.pse` export with a bare `all` no
+> longer writes an empty session; `set_setting` reads atom-level values back through `iterate`; `mutate` refuses
+> `keep_original_as` names that already exist, restores the view on errors and undoes the wizard's side effects
+> (lines, zeroed B-factors, `_pk*` selections); `events` pages oldest-first with `truncated`/`next_since` and
+> carries error text; stale discovery files whose pid was reused are purged (process start time); fetched files
+> go to `$MOLMCP_HOME/fetch` instead of the process cwd; ChimeraX `model_info` lists surface colours and
+> transparency and the command echo is stripped even when ChimeraX normalises the text. The 18-chain ID pass of
+> the earlier report now takes 1.2 s (3.7 s with occlusion).
+
 ## 1. Short answer
 
 * **Reach is essentially complete for everything that has a command or a Python API.**  The `run` tool executes the

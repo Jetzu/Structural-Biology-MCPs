@@ -822,6 +822,18 @@ the viewer's working directory (shown in the chat panel's welcome box and in `st
 
 ## 11. Troubleshooting
 
+**Renders report grey text / clipping that is not there (PyMOL)**
+
+An unlicensed or expired PyMOL burns an evaluation banner into ray-traced frames. `status` shows `"watermark":
+true` in that case and the analysis excludes the band automatically; a valid licence file in `~/.pymol/license.lic`
+makes the banner (and the flag) go away.
+
+**`Invalid selection name "x"` although `x` is listed (PyMOL 3.1)**
+
+A PyMOL bug: after `delete x` and reloading `x`, the undo history evicts the deletion ~30 commands later and
+drops the live object's name. The bridge disables undo headless and clears the undo cache after agent deletions in
+the GUI; for your own GUI session run `undo_clear_cache` after such a reload, or `delete all` + reload.
+
 **`No running pymol bridge found` / `no running chimerax bridge found`**
 
 1. Is the viewer running? In it, run `agent_status` (PyMOL) or `agent status` (ChimeraX). `not running` →

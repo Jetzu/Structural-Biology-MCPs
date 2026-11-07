@@ -173,6 +173,18 @@ Claude Code / Codex ──stdio──> pymol-mcp ──HTTP (127.0.0.1, token)�
 * Headless PyMOL runs PyMOL as a library inside its bundled Python (no busy keep-alive loop); headless
   ChimeraX needs Linux with `--offscreen` for rendering.
 
+## PyMOL quirks the servers work around
+
+* **Licence banner.** A PyMOL without a valid (or with an expired) licence burns "No License File - For Evaluation
+  Only" into every ray-traced frame. The bridge reports this (`status.watermark`), and `render`, `layout`,
+  `analyze_image` and `compare_renders` detect the grey text band and exclude it from the numbers (the PNG keeps it).
+* **Undo history vs. reused object names (PyMOL 3.1.5).** Once the undo history is active, `delete x` followed by
+  reloading an object named `x` leaves that object unselectable ("Invalid selection name") after about 30 further
+  undoable commands. Headless sessions keep undo disabled; in the GUI the bridge clears the undo cache whenever an
+  agent command removed objects. If you hit it yourself in the GUI, run `undo_clear_cache`.
+* **Headless feedback.** Command output such as `Executive: RMSD = ...` goes to the process' C-level stdout; the
+  bridge captures it per command so `run` and `log` show it.
+
 ## What has been verified where
 
 | | macOS (this build) | Linux (x86_64 container) | Windows |
@@ -181,7 +193,7 @@ Claude Code / Codex ──stdio──> pymol-mcp ──HTTP (127.0.0.1, token)�
 | PyMOL headless (library mode, ray renders) | tested | tested, open-source PyMOL 3.1 via conda-forge | tested under Wine: win32 Python 3.11 + PyMOL 3.2 wheel; server, tools list, headless launch, run/scene/render |
 | PyMOL plugin install through PyMOL's plugin prefs | tested | tested | tested under Wine (`%APPDATA%\pymol\startup`, PyMOL prefs updated) |
 | Installer: venv, `.exe` console scripts, Claude/Codex config files | tested | tested | tested under Wine (`.venv\Scripts\pymol-mcp.exe`, `C:\users\...\.claude.json`, `.codex\config.toml`) |
-| Unit + platform tests | pass (39) | pass | pass under Windows Python 3.11 (34 at the time, 1 skipped) |
+| Unit + platform tests | pass (44) | pass | pass under Windows Python 3.11 (34 at the time, 1 skipped) |
 | Red-team QA: 24 scenario agents, 113 reports, confirmed defects fixed (see docs/FEATURE_COVERAGE.md) | done | partially (PyMOL headless scenarios also ran on the Mac) | not run |
 | ChimeraX GUI: run / scene / render / layout / events / compare | tested, ChimeraX 1.11.1 | n/a (no display) | not tested |
 | ChimeraX headless `--nogui --offscreen`: launch via MCP, run / scene / offscreen render / layout / events / compare | not possible on macOS (verified: "running without graphics") | tested as a normal user in UCSF's official `ucsfrbvi/chimerax` image (arm64, ChimeraX 1.13 dev) | not possible |

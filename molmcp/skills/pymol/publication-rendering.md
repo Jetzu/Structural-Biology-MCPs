@@ -12,8 +12,10 @@ Verified on PyMOL 3.1.5 (incentive build).
 ## 1. Compose first, render last
 1. `scene` -> what is loaded/shown. Hide clutter (`hide everything, solvent`, `hide lines`).
 2. Frame it: `orient sel` or `zoom sel, 3` (buffer in Angstrom), `clip slab, 30` to cut depth, `turn y, 20`.
-3. Check with `render(width=800, height=600)` (fast, no ray): `analysis.coverage` 0.3-0.7 is a well-filled frame,
-   `clipped_edges` must be empty, `margins_frac` roughly balanced, `offset_from_centre_frac` near 0.
+3. Check with `render(width=800, height=600)` (fast, no ray): `clipped_edges` must be empty, `margins_frac`
+   roughly balanced (0.03-0.15 each side), `offset_from_centre_frac` near 0. `analysis.coverage` depends on the
+   representation: a cartoon of one domain after `orient` fills only 0.08-0.25 of the frame, sticks/lines even
+   less, a surface or a large assembly 0.3-0.6; judge framing by margins and clipping, not by a coverage target.
 4. Save the camera for later: `view fig, store` (or `get_view` tool -> `set_view` tool).
 
 ## 2. Figure settings (one `run` call)

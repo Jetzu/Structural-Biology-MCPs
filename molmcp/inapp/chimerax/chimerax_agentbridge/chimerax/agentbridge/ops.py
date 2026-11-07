@@ -237,6 +237,16 @@ def fingerprint(session):
                     d["colour_hash"] = int(m.atoms.colors.sum()) * 7 + int(m.residues.ribbon_colors.sum())
                 except Exception:
                     pass
+                try:
+                    import numpy as _np
+                    modes = _np.bincount(m.atoms.draw_modes.astype(int), minlength=3)[:3]
+                    d["style"] = (int(modes[0]), int(modes[1]), int(modes[2]), round(float(m.atoms.radii.sum()), 1),
+                                  round(float(getattr(m, "ball_scale", 0.0)), 3), round(float(getattr(m, "bond_radius", 0.0)), 3))
+                    xs = getattr(m, "ribbon_xs_mgr", None)
+                    if xs is not None:
+                        d["ribbon_style"] = str(sorted((k, str(v)) for k, v in vars(xs).items() if not k.startswith("_")))[:400]
+                except Exception:
+                    pass
             elif hasattr(m, "color") and m.color is not None:
                 try:
                     d["colour_hash"] = int(sum(int(x) for x in m.color))
@@ -274,6 +284,12 @@ def diff_fingerprints(a, b):
             ch.append({"change": "model_display", "id": "#" + k, "display": d["display"]})
         if o.get("pos") != d.get("pos") and "pos" in d:
             ch.append({"change": "model_moved", "id": "#" + k})
+        if o.get("style") is not None and d.get("style") is not None and o["style"] != d["style"]:
+            names = ("sphere", "ball", "stick")
+            ch.append({"change": "style", "id": "#" + k, "atom_draw_modes": {n: c for n, c in zip(names, d["style"][:3]) if c},
+                       "detail": "atom style / radii changed"})
+        if o.get("ribbon_style") is not None and d.get("ribbon_style") is not None and o["ribbon_style"] != d["ribbon_style"]:
+            ch.append({"change": "style", "id": "#" + k, "detail": "cartoon style changed"})
         for f in ("atoms", "shown_atoms", "shown_ribbons", "selected"):
             if f in d and f in o and o[f] != d[f]:
                 ch.append({"change": f, "id": "#" + k, "from": o[f], "to": d[f]})
@@ -344,12 +360,26 @@ def _run_one(session, text, log, want_json=False):
     finally:
         session.logger.remove_log(cap)
     msgs = []
+    import difflib
+
+    def _is_echo(line):
+        ln = line.strip()
+        if not ln or ln == text or ln in text:
+            return True
+        a, b = ln.lower().split(), text.strip().lower().split()
+        if not a or not b or a[0][:3] != b[0][:3]:
+            return False
+        # ChimeraX re-logs the normalised command ("colour" -> "color", expanded abbreviations)
+        return difflib.SequenceMatcher(None, " ".join(a), " ".join(b)).ratio() >= 0.7 and len(ln) <= len(text) + 40
+    first_msg = True
     for level, msg in cap.msgs:
         t = clean_log_text(msg)
         if not t or t == text:
+            first_msg = False
             continue
         # drop the command echo lines ChimeraX logs itself
-        lines = [ln for ln in t.splitlines() if ln.strip() and ln.strip() != text and ln.strip() not in text]
+        lines = [ln for ln in t.splitlines() if ln.strip() and not ((first_msg or level == 0) and _is_echo(ln))]
+        first_msg = False
         if not lines:
             continue
         t = "\n".join(lines)
@@ -482,7 +512,25 @@ def _model_info(session, m, detail):
                 info["non_polymer_residues"] = dict(names.most_common(12))
             surfs = [s for s in m.child_models() if type(s).__name__ == "MolecularSurface"]
             if surfs:
-                info["surfaces"] = [{"id": "#" + s.id_string, "name": s.name, "display": bool(s.display)} for s in surfs[:20]]
+                def _surf(s_):
+                    d_ = {"id": "#" + s_.id_string, "name": s_.name, "display": bool(s_.display)}
+                    try:
+                        cols = s_.vertex_colors
+                        if cols is not None and len(cols):
+                            mean = cols.mean(axis=0)
+                            d_["rgb"] = [int(x) for x in mean[:3]]
+                            d_["transparency"] = round(1.0 - float(mean[3]) / 255.0, 2)
+                            d_["uniform_colour"] = bool((cols[:, :3] == cols[0, :3]).all())
+                            d_["top_colors"] = _color_summary(cols, 3)
+                        elif s_.color is not None:
+                            c = [int(x) for x in s_.color]
+                            d_["rgb"] = c[:3]
+                            d_["transparency"] = round(1.0 - c[3] / 255.0, 2)
+                            d_["uniform_colour"] = True
+                    except Exception:
+                        pass
+                    return d_
+                info["surfaces"] = [_surf(s) for s in surfs[:20]]
             pbgs = [p for p in m.child_models() if type(p).__name__ == "PseudobondGroup"]
             if pbgs:
                 info["pseudobond_groups"] = [{"id": "#" + p.id_string, "name": p.name, "count": int(p.num_pseudobonds), "display": bool(p.display)} for p in pbgs[:20]]
@@ -1003,8 +1051,13 @@ def op_events(session, args):
     _last_fp = fp
     if _bridge and changes:
         _bridge.events.add("state_change", changes=changes)
-    evs = _bridge.events.since(since, limit=int(args.get("limit", 300))) if _bridge else []
-    return {"seq": _bridge.events.seq if _bridge else 0, "events": evs, "changes_now": changes}
+    limit = int(args.get("limit", 300))
+    evs, truncated = _bridge.events.since(since, limit=limit) if _bridge else ([], False)
+    out = {"seq": _bridge.events.seq if _bridge else 0, "events": evs, "changes_now": changes}
+    if truncated:
+        out["truncated"] = True
+        out["next_since"] = evs[-1]["seq"] if evs else since
+    return out
 
 
 def op_log(session, args):

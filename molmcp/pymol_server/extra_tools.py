@@ -97,13 +97,17 @@ elif kind == "rmsd":
     result = {"kind": kind, "value": round(cmd.rms_cur(sels[0], sels[1], matchmaker=-1), 3), "unit": "A", "note": "in place, no fitting"}
 elif kind == "count":
     res = set(); cmd.iterate(sels[0], "_r.add((model, chain, resi))", space={"_r": res})
-    result = {"kind": kind, "atoms": cmd.count_atoms(sels[0]), "residues": len(res), "chains": cmd.get_chains(sels[0])}
+    by_obj = {}
+    for o in (cmd.get_object_list("(" + sels[0] + ")") or []):
+        by_obj[o] = cmd.get_chains("(" + sels[0] + ") and %%" + o)
+    result = {"kind": kind, "atoms": cmd.count_atoms(sels[0]), "residues": len(res),
+              "chains": sorted({c for cs in by_obj.values() for c in cs}), "chains_by_object": by_obj}
 elif kind == "sasa":
-    old = cmd.get("dot_solvent"); cmd.set("dot_solvent", 1); cmd.set("dot_density", 3)
+    old = cmd.get("dot_solvent"); old_dd = cmd.get("dot_density"); cmd.set("dot_solvent", 1); cmd.set("dot_density", 3)
     try:
         area = cmd.get_area(sels[0])
     finally:
-        cmd.set("dot_solvent", old)
+        cmd.set("dot_solvent", old); cmd.set("dot_density", old_dd)
     result = {"kind": kind, "value": round(float(area), 1), "unit": "A^2", "note": "solvent-accessible area via get_area with dot_solvent=1"}
 name = %(name)r
 if name and kind in ("distance", "angle", "dihedral"):
@@ -120,9 +124,14 @@ for s_ in (%(mobile)r, %(target)r):
         raise ValueError("selection %%r matches no atoms" %% s_)
 if method == "cealign":
     r = cmd.cealign(%(target)r, %(mobile)r, object=%(obj)r)
-    result = {"method": method, "rmsd": round(r.get("RMSD", 0), 3), "aligned_atoms": r.get("alignment_length")}
+    result = {"method": method, "rmsd": round(r.get("RMSD", 0), 3), "aligned_atoms": r.get("alignment_length"),
+              "note": "cealign ignores cycles/cutoff"}
 elif method == "pair_fit":
-    result = {"method": method, "rmsd": round(cmd.pair_fit(%(mobile)r, %(target)r), 3)}
+    n1, n2 = cmd.count_atoms(%(mobile)r), cmd.count_atoms(%(target)r)
+    if n1 != n2:
+        raise ValueError("pair_fit needs selections with equal atom counts (got %%d vs %%d); pick matching atoms, e.g. 'name CA'" %% (n1, n2))
+    result = {"method": method, "rmsd": round(cmd.pair_fit(%(mobile)r, %(target)r), 3), "atoms": n1,
+              "note": "pair_fit matches atoms by order; it creates no alignment object (object_name ignored) and ignores cycles/cutoff"}
 else:
     fn = cmd.super if method == "super" else cmd.align
     r = fn(%(mobile)r, %(target)r, cycles=%(cycles)d, cutoff=%(cutoff)f, object=%(obj)r)
@@ -134,19 +143,50 @@ PYMOL_SEQUENCE = r'''
 sel = %(sel)r
 if cmd.count_atoms(sel) == 0:
     raise ValueError("selection %%r matches no atoms" %% sel)
+NUC = {"DA": "A", "DC": "C", "DG": "G", "DT": "T", "DU": "U", "DI": "I", "A": "A", "C": "C", "G": "G", "U": "U", "I": "I",
+       "T": "T", "N": "N", "DN": "N"}
+def _ranges(vals):
+    vals = sorted(set(vals)); out_ = []; start = prev = None
+    for v in vals:
+        if start is None:
+            start = prev = v
+        elif v == prev + 1:
+            prev = v
+        else:
+            out_.append("%%d" %% start if start == prev else "%%d-%%d" %% (start, prev)); start = prev = v
+    if start is not None:
+        out_.append("%%d" %% start if start == prev else "%%d-%%d" %% (start, prev))
+    return out_
 out = {"selection": sel, "chains": []}
+polymer_atoms = cmd.count_atoms("(" + sel + ") and polymer")
 for obj in (cmd.get_object_list("(" + sel + ")") or []):
     for ch in cmd.get_chains("(" + sel + ") and %%" + obj):
         s = "((" + sel + ") and %%" + obj + " and chain '" + ch + "' and polymer)"
-        seq = []; nums = []
-        cmd.iterate(s + " and name CA+C1'", "_s.append(oneletter); _n.append(resv)", space={"_s": seq, "_n": nums})
-        if seq:
-            out["chains"].append({"object": obj, "chain": ch, "length": len(seq), "first": min(nums), "last": max(nums), "sequence": "".join(seq)})
+        rows = []
+        cmd.iterate(s + " and name CA+C1'", "_r.append((resv, resi, resn, oneletter))", space={"_r": rows})
+        if rows:
+            rows.sort(key=lambda r_: r_[0])
+            seq = []
+            for resv, resi, resn, one in rows:
+                if one in ("X", "", None) and resn.strip() in NUC:
+                    one = NUC[resn.strip()]
+                seq.append(one or "X")
+            nums = [r_[0] for r_ in rows]
+            kind = "nucleic" if any(r_[2].strip() in NUC for r_ in rows) else "protein"
+            out["chains"].append({"object": obj, "chain": ch, "type": kind, "length": len(seq), "first": min(nums), "last": max(nums),
+                                  "ranges": _ranges(nums), "sequence": "".join(seq)})
+if not out["chains"]:
+    out["note"] = ("the selection has %%d atoms but no polymer residues with a CA (protein) or C1' (nucleic acid) atom; "
+                   "solvent, ligands and CA-less selections have no sequence" %% cmd.count_atoms(sel)) if polymer_atoms == 0 else \
+                  "polymer atoms matched but none of them is a CA/C1' atom; select whole residues (byres ...)"
 result = out
 '''
 
 PYMOL_CONTACTS = r'''
 s1, s2, cut, polar = %(s1)r, %(s2)r, %(cut)f, %(polar)r
+for s_ in (s1, s2):
+    if cmd.count_atoms(s_) == 0:
+        raise ValueError("selection %%r matches no atoms" %% s_)
 if polar:
     s1 = "(" + s1 + ") and (elem N+O)"; s2 = "(" + s2 + ") and (elem N+O)"; cut = min(cut, 3.5)
 near1 = "(" + s1 + ") within " + str(cut) + " of (" + s2 + ")"
@@ -182,23 +222,42 @@ if st > 0:
 d = os.path.dirname(p)
 if d and not os.path.isdir(d):
     raise ValueError("directory does not exist: %%s" %% d)
-cmd.save(p, %(sel)r, state=st, format=%(fmt)r or "")
+sel_ = %(sel)r
+fmt_ = (%(fmt)r or "").lower() or p.lower().rsplit(".", 1)[-1]
+if fmt_ in ("pse", "pze", "psw"):
+    # PyMOL treats a bare "all" / "" as a partial-session object list and writes an empty session
+    if sel_.strip().strip("()").strip().lower() in ("all", "", "*", "visible", "enabled"):
+        cmd.save(p, "(all)", state=st, format=%(fmt)r or "", partial=0)
+    else:
+        cmd.save(p, sel_, state=st, format=%(fmt)r or "", partial=1)
+else:
+    cmd.save(p, sel_, state=st, format=%(fmt)r or "")
 result = {"path": os.path.abspath(p), "bytes": os.path.getsize(p) if os.path.exists(p) else None}
+if fmt_ in ("pse", "pze", "psw") and result["bytes"] is not None and result["bytes"] < 2000 and cmd.count_atoms("all") > 0:
+    raise RuntimeError("the session file is suspiciously small (%%d bytes) although %%d atoms are loaded" %% (result["bytes"], cmd.count_atoms("all")))
 '''
 
 
 PYMOL_RESIDUE_TABLE = r'''
 from collections import Counter, OrderedDict
 REP = {0: "sticks", 1: "spheres", 2: "surface", 3: "labels", 4: "nb_spheres", 5: "cartoon", 6: "ribbon", 7: "lines", 8: "mesh", 9: "dots", 10: "dashes", 11: "nonbonded"}
+off, n = %(off)d, %(n)d
+if off < 0 or n < 1:
+    raise ValueError("offset must be >= 0 and max_rows >= 1 (max_rows is capped at 2000; page with offset)")
+cmd.count_atoms(%(sel)r)          # raises for invalid selection names instead of returning an empty table
 acc = OrderedDict()
 def _c(model, chain, resi, resn, ss, b, reps, color):
     k = (model, chain, resi)
     d = acc.get(k)
     if d is None:
-        d = acc[k] = {"object": model, "chain": chain, "resi": resi, "resn": resn, "ss": ss or "L", "b": [], "reps": 0, "colors": Counter(), "atoms": 0}
+        d = acc[k] = {"object": model, "chain": chain, "resi": resi, "resn": resn, "ss": ss, "b": [], "reps": 0, "colors": Counter(), "atoms": 0, "polymer": False}
     d["b"].append(b); d["reps"] |= reps; d["colors"][color] += 1; d["atoms"] += 1
 cmd.iterate(%(sel)r, "_c(model, chain, resi, resn, ss, b, reps, color)", space={"_c": _c})
-names = {i: n for n, i in cmd.get_color_indices()}
+poly = set(); cmd.iterate("(" + %(sel)r + ") and polymer", "_p.add((model, chain, resi))", space={"_p": poly})
+for k_, d_ in acc.items():
+    d_["polymer"] = k_ in poly
+    d_["ss"] = (d_["ss"] or "L") if d_["polymer"] else ""
+names = {i: n for n, i in cmd.get_color_indices(all=1)}
 def _col(ci):
     if ci >= 0x40000000:
         return [(ci >> 16) & 255, (ci >> 8) & 255, ci & 255], "rgb"
@@ -212,11 +271,10 @@ for d in acc.values():
                  "b_mean": round(sum(d["b"]) / len(d["b"]), 2), "atoms": d["atoms"],
                  "reps_shown": [REP[i] for i in REP if d["reps"] & (1 << i)], "color": cname, "rgb": rgb})
 total = len(rows)
-off, n = %(off)d, %(n)d
-if off < 0 or n < 1:
-    raise ValueError("offset must be >= 0 and max_rows >= 1")
 n = min(n, 2000)
-result = {"selection": %(sel)r, "total": total, "offset": off, "max_rows": n, "rows": rows[off:off + n], "truncated": off + n < total}
+result = {"selection": %(sel)r, "total": total, "offset": off, "max_rows": n, "rows": rows[off:off + n], "truncated": off + n < total,
+          "note": "ss is '' for non-polymer residues (ligands, water, ions); reps_shown lists enabled representation flags, "
+                  "some of which draw nothing for a given residue (e.g. lines for a single-atom water)"}
 '''
 
 
@@ -267,37 +325,57 @@ if len(ids) != 1:
     raise ValueError("selection must match exactly one residue, matched %%d: %%s" %% (len(ids), sorted(ids)[:5]))
 model, chain, resi = next(iter(ids))
 if keep:
+    if keep == model:
+        raise ValueError("keep_original_as must differ from the object being mutated (%%r)" %% model)
+    if keep in cmd.get_names("all"):
+        raise ValueError("an object or selection named %%r already exists; cmd.create would merge into it - choose a new name or delete it first" %% keep)
     cmd.create(keep, model)
+mut = "/%%s//%%s/%%s/" %% (model, chain, resi)
 before = []
 cmd.iterate(sel, "_b.append(resn)", space={"_b": before})
+b_before = {}
+cmd.iterate(mut, "_bb[name] = b", space={"_bb": b_before})
+lines_before = cmd.count_atoms("(%%s) and rep lines" %% mut)
 view0 = cmd.get_view()
-cmd.wizard("mutagenesis"); cmd.do("refresh_wizard")
-w = cmd.get_wizard()
-w.set_mode(res)
-w.do_select("/%%s//%%s/%%s/" %% (model, chain, resi))
-scores = [float(x) for x in getattr(w, "bump_scores", []) or []]
-n_rot = cmd.count_states("mutation") if "mutation" in cmd.get_names("all") else len(scores)
-if rot > max(n_rot, 1):
+try:
+    cmd.wizard("mutagenesis"); cmd.do("refresh_wizard")
+    w = cmd.get_wizard()
+    w.set_mode(res)
+    w.do_select(mut)
+    scores = [float(x) for x in getattr(w, "bump_scores", []) or []]
+    n_rot = cmd.count_states("mutation") if "mutation" in cmd.get_names("all") else len(scores)
+    if rot > max(n_rot, 1):
+        raise ValueError("rotamer %%d out of range (1-%%d)" %% (rot, max(n_rot, 1)))
+    chosen = rot if rot > 0 else ((scores.index(min(scores)) + 1) if scores else 1)
+    cmd.frame(chosen)
+    w.apply()
+finally:
     cmd.set_wizard()
-    raise ValueError("rotamer %%d out of range (1-%%d)" %% (rot, max(n_rot, 1)))
-chosen = rot if rot > 0 else ((scores.index(min(scores)) + 1) if scores else 1)
-cmd.frame(chosen)
-w.apply()
-cmd.set_wizard()
-cmd.set_view(view0)
+    for s_ in cmd.get_names("selections"):
+        if s_.startswith("_pk"):
+            cmd.delete(s_)
+    cmd.set_view(view0)
+# the wizard shows the residue as lines and zeroes its B-factors: undo both
+if lines_before == 0:
+    cmd.hide("lines", mut)
+if b_before:
+    mean_b = sum(b_before.values()) / len(b_before)
+    cmd.alter(mut, "b = _bb.get(name, _mb)", space={"_bb": b_before, "_mb": mean_b})
 after = []
-cmd.iterate("/%%s//%%s/%%s/" %% (model, chain, resi), "_a.append(resn)", space={"_a": after})
-mut = "/%%s//%%s/%%s/" %% (model, chain, resi)
+cmd.iterate(mut, "_a.append(resn)", space={"_a": after})
 others = "(%%s) and not hydro and not (byres (%%s)) and not ((neighbor (%%s)) extend 2)" %% (model, mut, mut)
 close = cmd.find_pairs("(%%s) and not hydro and not name N+C+O+CA" %% mut, others, cutoff=2.5)
 result = {"object": model, "chain": chain, "resi": resi, "from": before[0] if before else None, "to": after[0] if after else None,
           "rotamers": n_rot, "chosen_rotamer": chosen, "bump_scores": [round(s, 2) for s in scores][:20],
           "heavy_atom_contacts_below_2.5A": len(close), "kept_original_as": keep,
-          "note": "the camera was not moved; side-chain contacts exclude bonded/adjacent backbone atoms"}
+          "note": "camera, representations and B-factors of the residue were restored (new side-chain atoms get the "
+                  "residue's mean B); side-chain contacts exclude bonded/adjacent backbone atoms"}
 '''
 
 PYMOL_MAP_INFO = r'''
 name = %(name)r
+if name and name not in cmd.get_names("public_objects"):
+    raise ValueError("no object named %%r (have: %%s)" %% (name, ", ".join(cmd.get_names("public_objects"))))
 out = {"maps": [], "isosurfaces": []}
 for o in cmd.get_names("public_objects"):
     if name and o != name:
@@ -343,6 +421,7 @@ for pair in raw:
 for m in objs:
     cmd.iterate("%%" + m, "_d[(model, index)] = (chain, resn, resi, name)", space={"_d": info})
 seen = {}
+atom_pairs_total = 0
 for pair in raw:
     if len(pair) < 2:
         continue
@@ -350,45 +429,85 @@ for pair in raw:
     a, b = info.get((m1, i1)), info.get((m2, i2))
     if not a or not b:
         continue
+    atom_pairs_total += 1
     key = ("%%s/%%s/%%s%%s" %% (m1, a[0], a[1], a[2]), "%%s/%%s/%%s%%s" %% (m2, b[0], b[1], b[2]))
-    if key in seen and a[3] != "CA":
+    is_ca = a[3] == "CA" and b[3] == "CA"
+    if key in seen and (seen[key]["atom"] == "CA" or not is_ca):
         continue
     try:
         d = cmd.get_distance("%%s and index %%d" %% (m1, i1), "%%s and index %%d" %% (m2, i2))
     except Exception:
         d = None
-    seen[key] = {"a": key[0], "b": key[1], "atom": a[3], "distance": round(d, 2) if d is not None else None}
+    seen[key] = {"a": key[0], "b": key[1], "atom": "CA" if is_ca else a[3], "distance": round(d, 2) if d is not None else None}
 pairs = list(seen.values())
-result = {"alignment": aln, "objects": sorted(objs), "residue_pairs_total": len(pairs), "pairs": pairs[:n],
-          "worst_pairs": sorted([p for p in pairs if p["distance"] is not None], key=lambda p: -p["distance"])[:10]}
+ca_pairs = [p for p in pairs if p["atom"] == "CA"]
+result = {"alignment": aln, "objects": sorted(objs), "atom_pairs_total": atom_pairs_total,
+          "residue_pairs_total": len(pairs), "ca_pairs": len(ca_pairs), "pairs": pairs[:n],
+          "worst_pairs": sorted([p for p in ca_pairs if p["distance"] is not None], key=lambda p: -p["distance"])[:10],
+          "note": "distances are CA-CA where both residues have a CA in the alignment; residue_pairs_total can differ from "
+                  "align's residues_aligned because the alignment object stores atom pairs after refinement"}
 '''
 
 PYMOL_SET_SETTING = r'''
 name, value, sel = %(name)r, %(value)r, %(sel)r
 try:
-    old = cmd.get_setting_tuple(name, sel)[1] if sel else cmd.get_setting_tuple(name)[1]
+    cmd.get_setting_tuple(name)
 except Exception:
-    old = None
-if sel:
-    cmd.set(name, value, sel)
-else:
-    cmd.set(name, value)
-try:
-    new = cmd.get_setting_tuple(name, sel)[1] if sel else cmd.get_setting_tuple(name)[1]
-except Exception:
-    new = None
+    raise ValueError("unknown setting %%r" %% name)
+names_ = {i: n for n, i in cmd.get_color_indices(all=1)}
 def _dec(v):
     if isinstance(v, (list, tuple)) and len(v) == 1:
         v = v[0]
     if (name.endswith("color") or name == "bg_rgb") and isinstance(v, int):
         if v >= 0x40000000:
-            return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+            return {"name": "rgb", "rgb": [(v >> 16) & 255, (v >> 8) & 255, v & 255]}
         if v >= 0:
             t = cmd.get_color_tuple(v)
-            return [int(round(x * 255)) for x in t] if t else v
-        return "default"
+            return {"name": names_.get(v, "index_%%d" %% v), "rgb": [int(round(x * 255)) for x in t] if t else None}
+        return {"name": "default", "rgb": None}
+    if isinstance(v, (list, tuple)) and len(v) == 3 and all(isinstance(x, float) for x in v) and (name.endswith("color") or name == "bg_rgb"):
+        return {"name": "rgb", "rgb": [int(round(x * 255)) for x in v]}
+    if isinstance(v, float):
+        return round(v, 4)
+    if isinstance(v, (list, tuple)):
+        return [round(x, 4) if isinstance(x, float) else x for x in v]
     return v
-if old is None and new is None:
-    raise ValueError("unknown setting %%r" %% name)
-result = {"setting": name, "selection": sel, "old": _dec(old), "new": _dec(new)}
+obj_names = set(cmd.get_names("objects"))
+bare = sel.strip().lstrip("%%").strip() if sel else ""
+scope = "global" if not sel else ("object" if bare in obj_names else "atoms")
+def _read():
+    if scope == "global":
+        return cmd.get_setting_tuple(name)[1]
+    if scope == "object":
+        return cmd.get_setting_tuple(name, bare)[1]
+    vals = []
+    cmd.iterate(sel, "_v.append(getattr(s, _n, None))", space={"_v": vals, "_n": name})
+    uniq = []
+    for v in vals:
+        if v not in uniq:
+            uniq.append(v)
+    return uniq
+try:
+    old = _read()
+except Exception:
+    old = None
+if scope == "global":
+    cmd.set(name, value)
+elif scope == "object":
+    cmd.set(name, value, bare)
+else:
+    n_atoms = cmd.count_atoms(sel)
+    if n_atoms == 0:
+        raise ValueError("selection %%r matches no atoms" %% sel)
+    cmd.set(name, value, sel)
+try:
+    new = _read()
+except Exception:
+    new = None
+if scope == "atoms":
+    result = {"setting": name, "selection": sel, "scope": "atoms", "atoms": cmd.count_atoms(sel),
+              "old_values": [_dec(v) for v in (old or [])][:10], "new_values": [_dec(v) for v in (new or [])][:10],
+              "note": "atom-level values (unique per atom); None means the atom inherits the object/global value"}
+else:
+    result = {"setting": name, "selection": sel, "scope": scope, "old": _dec(old), "new": _dec(new)}
 '''

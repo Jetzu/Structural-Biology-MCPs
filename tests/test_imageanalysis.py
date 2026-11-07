@@ -112,3 +112,86 @@ class TestColors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRound3Fixes(unittest.TestCase):
+    """Regressions found by the second QA fleet (transparent flip, watermark banner, grid parsing, guard regex)."""
+
+    def _frame(self, w=400, h=300, bg=(255, 255, 255)):
+        import numpy as np
+        a = np.zeros((h, w, 4), dtype=np.uint8)
+        a[:, :, :3] = bg
+        a[:, :, 3] = 255
+        return a
+
+    def test_single_non_opaque_pixel_does_not_flip_to_transparent(self):
+        from molmcp.common import imageanalysis as ia
+        a = self._frame()
+        a[100:200, 150:250, :3] = (200, 30, 30)       # red block
+        a[10, 10, 3] = 254                            # one stray pixel
+        bg, transparent, _ = ia.estimate_background(a)
+        self.assertFalse(transparent)
+        self.assertEqual(bg, (255, 255, 255))
+        r = ia.analyze_render(a)
+        self.assertLess(r["coverage"], 0.2)
+        self.assertEqual(r["clipped_edges"], [])
+
+    def test_really_transparent_frame_is_detected(self):
+        from molmcp.common import imageanalysis as ia
+        a = self._frame()
+        a[:, :, 3] = 0
+        a[100:200, 150:250, 3] = 255
+        a[100:200, 150:250, :3] = (0, 0, 255)
+        bg, transparent, _ = ia.estimate_background(a)
+        self.assertTrue(transparent)
+        r = ia.analyze_render(a)
+        self.assertTrue(r["background"]["transparent"])
+        self.assertAlmostEqual(r["coverage"], 10000 / 120000.0, places=3)
+
+    def test_watermark_band_is_detected_and_masked(self):
+        from molmcp.common import imageanalysis as ia
+        a = self._frame(800, 600)
+        a[200:400, 300:500, :3] = (200, 30, 30)       # molecule
+        # grey text banner: 15 px high, 70 % wide, starting at the left edge, as the unlicensed build draws it
+        import numpy as np
+        rng = np.random.RandomState(0)
+        band = rng.rand(15, 560) < 0.45
+        a[420:435, 0:560, :3][band] = (130, 130, 130)
+        mask, info = ia.detect_watermark(a, (255, 255, 255), False)
+        self.assertIsNotNone(info)
+        self.assertEqual(info["rows"][0], 420)
+        plain = ia.analyze_render(a)
+        masked = ia.analyze_render(a, mask_watermark=True)
+        self.assertIn("left", plain["clipped_edges"] + plain["touching_edges"])
+        self.assertEqual(masked["clipped_edges"] + masked["touching_edges"], [])
+        self.assertEqual([p["family"] for p in masked["palette"]].count("grey"), 0)
+        self.assertTrue(masked["watermark"]["detected"])
+        none = ia.analyze_render(self._frame(), mask_watermark=True)
+        self.assertFalse(none["watermark"]["detected"])
+
+    def test_diff_images_masks_moving_banner(self):
+        from molmcp.common import imageanalysis as ia
+        a = self._frame(800, 600)
+        a[200:400, 300:500, :3] = (30, 30, 200)
+        b = a.copy()
+        a[420:435, 0:560, :3] = (130, 130, 130)
+        b[300:315, 0:560, :3] = (130, 130, 130)
+        d = ia.diff_images(a, b, mask_watermark=True)
+        self.assertTrue(d["watermark_masked"])
+        self.assertEqual(d["changed_pixels"], 0)
+
+    def test_grid_parsing(self):
+        from molmcp.common import server_common as sc
+        self.assertEqual(sc._grid("48x20"), (48, 20))
+        self.assertEqual(sc._grid("1000x1"), (160, 4))
+        with self.assertRaises(ValueError):
+            sc._grid("wide")
+        self.assertIn("error", sc._grid_or_error("abc")[2])
+
+    def test_dangerous_guard_word_boundaries(self):
+        from molmcp.common import server_common as sc
+        rx = sc.DANGEROUS["pymol"]
+        for ok_cmd in ("rms_cur a, b", "rms a, b", "cdx", "pipeline", "quiet_mode", "pythonic_thing"):
+            self.assertIsNone(rx.match(ok_cmd), ok_cmd)
+        for bad in ("quit", "q", "cd /tmp", "pip install x", "python", "cmd.quit()", "/print(1)", "@file.pml", "system ls", "reinitialize", "exit"):
+            self.assertIsNotNone(rx.match(bad), bad)

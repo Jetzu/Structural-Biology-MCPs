@@ -47,6 +47,43 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def pid_start_time(pid: int) -> Optional[float]:
+    """Process creation time as a Unix timestamp (best effort, None when unknown)."""
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+            from ctypes import wintypes
+            h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if not h:
+                return None
+            try:
+                ct, et, kt, ut = (wintypes.FILETIME() for _ in range(4))
+                if not ctypes.windll.kernel32.GetProcessTimes(h, ctypes.byref(ct), ctypes.byref(et), ctypes.byref(kt), ctypes.byref(ut)):
+                    return None
+                ticks = (ct.dwHighDateTime << 32) | ct.dwLowDateTime
+                return ticks / 1e7 - 11644473600.0
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h)
+        if sys.platform.startswith("linux"):
+            st = os.stat("/proc/%d" % pid)
+            return float(st.st_ctime)
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5).stdout.strip()
+        if not out:
+            return None
+        return time.mktime(time.strptime(out, "%a %b %d %H:%M:%S %Y"))
+    except Exception:
+        return None
+
+
+def pid_reused(pid: int, file_started: Optional[float]) -> bool:
+    """True when the process behind ``pid`` started after the discovery file was written: the pid now
+    belongs to an unrelated process and the file is stale."""
+    if not file_started:
+        return False
+    t = pid_start_time(pid)
+    return t is not None and t > float(file_started) + 5.0
+
+
 def list_instances(app: str) -> List[dict]:
     """Discovery files of live bridges for ``app`` ("pymol" or "chimerax"), newest first."""
     out = []
@@ -58,7 +95,8 @@ def list_instances(app: str) -> List[dict]:
         except Exception:
             continue
         info["_file"] = path
-        if not pid_alive(int(info.get("pid", 0))):
+        pid = int(info.get("pid", 0))
+        if not pid_alive(pid) or pid_reused(pid, info.get("started")):
             try:
                 os.remove(path)
             except OSError:

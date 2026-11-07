@@ -173,14 +173,19 @@ def estimate_background(rgba: np.ndarray) -> Tuple[Tuple[int, int, int], bool, f
     border_agreement says what fraction of the border matched it.
     """
     alpha = rgba[:, :, 3]
-    if (alpha < 255).any():
+    border_alpha = np.concatenate([alpha[0, :], alpha[-1, :], alpha[:, 0], alpha[:, -1]])
+    clear_border = float((border_alpha < 128).mean())
+    clear_all = float((alpha == 0).mean())
+    # Transparent background only when a real share of the frame is see-through (a single anti-aliased or
+    # watermark pixel with alpha 254 must not flip the analysis into "transparent" mode).
+    if clear_border >= 0.2 or clear_all >= 0.01:
         bg_px = rgba[alpha == 0][:, :3]
         if bg_px.size:
             vals, counts = np.unique(bg_px, axis=0, return_counts=True)
             rgb = tuple(int(v) for v in vals[counts.argmax()])
         else:
             rgb = (0, 0, 0)
-        return rgb, True, 1.0
+        return rgb, True, _r(clear_border)
     border = np.concatenate([rgba[0, :, :3], rgba[-1, :, :3], rgba[:, 0, :3], rgba[:, -1, :3]])
     vals, counts = np.unique(border, axis=0, return_counts=True)
     i = counts.argmax()
@@ -190,9 +195,90 @@ def estimate_background(rgba: np.ndarray) -> Tuple[Tuple[int, int, int], bool, f
 
 def foreground_mask(rgba: np.ndarray, bg_rgb: Sequence[int], transparent: bool, tol: int = 18) -> np.ndarray:
     if transparent:
-        return rgba[:, :, 3] > 8
+        return rgba[:, :, 3] >= 64
     diff = np.abs(rgba[:, :, :3].astype(np.int16) - np.array(bg_rgb, dtype=np.int16)).max(axis=2)
     return diff > tol
+
+
+def _erode(mask: np.ndarray) -> np.ndarray:
+    """4-neighbour erosion: drops the one-pixel anti-aliasing fringe around shapes."""
+    c = mask.copy()
+    c[1:, :] &= mask[:-1, :]
+    c[:-1, :] &= mask[1:, :]
+    c[:, 1:] &= mask[:, :-1]
+    c[:, :-1] &= mask[:, 1:]
+    return c
+
+
+def _dilate(mask: np.ndarray) -> np.ndarray:
+    c = mask.copy()
+    c[1:, :] |= mask[:-1, :]
+    c[:-1, :] |= mask[1:, :]
+    c[:, 1:] |= mask[:, :-1]
+    c[:, :-1] |= mask[:, 1:]
+    return c
+
+
+def detect_watermark(rgba: np.ndarray, bg_rgb: Sequence[int], transparent: bool):
+    """Find the text banner an unlicensed incentive PyMOL burns into ray-traced frames
+    ("No License File - For Evaluation Only ...").
+
+    The banner is a band of neutral grey text 1.2-4 % of the frame height high and 50-85 % of the frame width
+    wide, at a row that moves between renders.  Returns (mask, info) or (None, None).  Callers only ask for this
+    when the viewer reported that it runs without a valid licence.
+    """
+    h, w = rgba.shape[:2]
+    if h < 60 or w < 120:
+        return None, None
+    rgb = rgba[:, :, :3].astype(np.int16)
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    neutral = (np.abs(r - g) <= 14) & (np.abs(g - b) <= 14) & (r >= 60) & (r <= 228)
+    if transparent:
+        neutral &= rgba[:, :, 3] > 0
+    else:
+        neutral &= np.abs(rgb - np.array(bg_rgb, dtype=np.int16)).max(axis=2) > 18
+    rows = neutral.sum(axis=1)
+    thr = max(3, int(0.03 * w))
+    bands = []
+    y = 0
+    while y < h:
+        if rows[y] >= thr:
+            y0 = y
+            last = y
+            while y < h and (rows[y] >= thr or (y - last) <= 1):
+                if rows[y] >= thr:
+                    last = y
+                y += 1
+            bands.append((y0, last))
+        else:
+            y += 1
+    best = None
+    for y0, y1 in bands:
+        hpx = y1 - y0 + 1
+        if hpx < 5 or hpx < 0.012 * h or hpx > max(40, 0.04 * h):
+            continue
+        if y0 < 0.2 * h or y1 > 0.9 * h:
+            continue
+        band = neutral[y0:y1 + 1]
+        cols = np.flatnonzero(band.any(axis=0))
+        if cols.size == 0:
+            continue
+        ext = (cols[-1] - cols[0] + 1) / float(w)
+        if ext < 0.5 or ext > 0.85:
+            continue
+        n = int(band.sum())
+        if best is None or n > best[0]:
+            best = (n, y0, y1, int(cols[0]), int(cols[-1]))
+    if best is None:
+        return None, None
+    n, y0, y1, x0, x1 = best
+    mask = np.zeros(neutral.shape, dtype=bool)
+    ya, yb = max(0, y0 - 2), min(h, y1 + 3)
+    mask[ya:yb] = _dilate(_dilate(neutral[ya:yb]))
+    info = {"detected": True, "rows": [int(y0), int(y1)], "x": [x0, x1], "pixels": int(mask.sum()),
+            "note": "PyMOL runs without a valid licence and burns an evaluation text banner into ray-traced "
+                    "frames; the band was excluded from the analysis (it is still in the PNG)"}
+    return mask, info
 
 
 def _sample(arr: np.ndarray, max_n: int = 400_000) -> np.ndarray:
@@ -230,6 +316,8 @@ def palette(rgb_pixels: np.ndarray, k: int = 8, quant: int = 24) -> List[dict]:
             m["dist"] = min(m["dist"], dist)
     out = []
     for m in sorted(merged.values(), key=lambda d: -d["n"])[:k]:
+        if m["n"] / total < 0.003 and out:
+            continue          # sub-0.3 % shades are anti-aliasing noise, not a colour of the figure
         mean = tuple(int(round(v)) for v in (m["sum"] / m["n"]))
         out.append({
             "hex": hex_color(mean),
@@ -310,17 +398,24 @@ def _describe_offset(dx: float, dy: float) -> str:
 
 def analyze_render(src: ImageSource, grid_cols: int = 48, grid_rows: int = 20,
                    palette_k: int = 8, bg_rgb: Optional[Sequence[int]] = None,
-                   tol: int = 18) -> dict:
+                   tol: int = 18, mask_watermark: bool = False) -> dict:
     """Describe a rendered frame numerically.
 
     ``bg_rgb`` can be supplied by the caller (the viewer knows its background
     colour exactly), otherwise it is estimated from the image border.
+    ``mask_watermark`` excludes the licence banner of an unlicensed PyMOL (see
+    :func:`detect_watermark`).
     """
     rgba = load_rgba(src)
     h, w = rgba.shape[:2]
     est_bg, transparent, agreement = estimate_background(rgba)
     bg = tuple(int(x) for x in bg_rgb[:3]) if (bg_rgb is not None and not transparent) else est_bg
     fg = foreground_mask(rgba, bg, transparent, tol=tol)
+    wm_info = None
+    if mask_watermark:
+        wm_mask, wm_info = detect_watermark(rgba, bg, transparent)
+        if wm_mask is not None:
+            fg = fg & ~wm_mask
     n_fg = int(fg.sum())
     coverage = n_fg / float(h * w)
     bb = bbox_of(fg)
@@ -330,8 +425,14 @@ def analyze_render(src: ImageSource, grid_cols: int = 48, grid_rows: int = 20,
     touching = [side for side, frac in edges.items() if 0 < frac < 0.02]
 
     fg_rgb = rgba[fg][:, :3]
-    pal = palette(fg_rgb, k=palette_k)
-    hues = hue_shares(fg_rgb)
+    # colour statistics on the eroded mask: the one-pixel anti-aliasing fringe would otherwise add dark
+    # "shades" to the palette; thin content (lines, meshes) keeps the full mask
+    fg_core = _erode(fg) if n_fg > 4000 else fg
+    if int(fg_core.sum()) < 0.5 * n_fg:
+        fg_core = fg
+    core_rgb = rgba[fg_core][:, :3]
+    pal = palette(core_rgb, k=palette_k)
+    hues = hue_shares(core_rgb)
 
     luma = _luma(rgba[:, :, :3])
     if n_fg:
@@ -389,7 +490,11 @@ def analyze_render(src: ImageSource, grid_cols: int = 48, grid_rows: int = 20,
         "ascii": amap,
         "ascii_legend": "each char = one cell of a %dx%d grid; ' ' empty .. '@' full" % (grid_cols, grid_rows),
     }
+    if mask_watermark:
+        result["watermark"] = wm_info or {"detected": False}
     result["summary"] = summarize_render(result)
+    if wm_info:
+        result["summary"] += " A PyMOL evaluation-licence text banner was detected and excluded."
     return result
 
 
@@ -451,7 +556,8 @@ def id_colors(n: int) -> List[Tuple[int, int, int]]:
 
 
 def analyze_segmentation(src: ImageSource, legend: Dict[str, str], bg_rgb: Optional[Sequence[int]] = None,
-                         grid_cols: int = 48, grid_rows: int = 20, tol: int = 28) -> dict:
+                         grid_cols: int = 48, grid_rows: int = 20, tol: int = 28,
+                         mask_watermark: bool = False) -> dict:
     """Per-item visibility statistics from an ID-pass render.
 
     ``legend`` maps hex colour -> item label.  Pixels are matched exactly
@@ -476,6 +582,10 @@ def analyze_segmentation(src: ImageSource, legend: Dict[str, str], bg_rgb: Optio
     if colors.shape[0] and int(colors.min()) >= 60:
         # ID colours never go below 70 per channel: anything darker is background or an anti-aliased fringe
         is_bg = is_bg | (flat.max(axis=1) < 45)
+    if mask_watermark:
+        wm_mask, _ = detect_watermark(rgba, bg, transparent)
+        if wm_mask is not None:
+            is_bg = is_bg | wm_mask.reshape(-1)
     fg_idx = np.flatnonzero(~is_bg)
     if fg_idx.size and colors.shape[0]:
         fgpx = flat[fg_idx]
@@ -608,7 +718,7 @@ def occlusion_report(composite: dict, solo_counts: Dict[str, int]) -> List[dict]
 # --------------------------------------------------------------------------
 
 def diff_images(a_src: ImageSource, b_src: ImageSource, tol: int = 16,
-                grid_cols: int = 48, grid_rows: int = 20) -> dict:
+                grid_cols: int = 48, grid_rows: int = 20, mask_watermark: bool = False) -> dict:
     a = load_rgba(a_src)
     b = load_rgba(b_src)
     resized = False
@@ -616,6 +726,14 @@ def diff_images(a_src: ImageSource, b_src: ImageSource, tol: int = 16,
         b = np.array(Image.fromarray(b).resize((a.shape[1], a.shape[0]), Image.BILINEAR), dtype=np.uint8)
         resized = True
     d = np.abs(a.astype(np.int16) - b.astype(np.int16)).max(axis=2)
+    masked = False
+    if mask_watermark:
+        for img in (a, b):
+            bg, transparent, _ = estimate_background(img)
+            m, _ = detect_watermark(img, bg, transparent)
+            if m is not None:
+                d[m] = 0
+                masked = True
     changed = d > tol
     n = int(changed.sum())
     h, w = changed.shape
@@ -641,6 +759,7 @@ def diff_images(a_src: ImageSource, b_src: ImageSource, tol: int = 16,
         "changed_pixels": n,
         "mean_abs_diff": _r(mean_diff, 2),
         "likely_identical": bool(n == 0 or noise),
+        "watermark_masked": masked,
         "bbox": _bbox_dict(bb, w, h),
         "ascii": ascii_map(cells),
         "summary": summary,

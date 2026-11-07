@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -109,6 +111,108 @@ def _cmd():
     return cmd
 
 
+_LICENSE_STATE = None
+
+
+def _unlicensed():
+    """True when this PyMOL has no valid licence: incentive builds then burn an evaluation text banner into
+    every ray-traced frame, which the server's image analysis masks out."""
+    global _LICENSE_STATE
+    if _LICENSE_STATE is None:
+        state = False
+        try:
+            from pymol import licensing
+            info = licensing.get_license_info()
+            state = bool((not info.is_valid()) or info.is_eval() or info.is_expired())
+        except Exception:
+            state = False
+        _LICENSE_STATE = state
+    return _LICENSE_STATE
+
+
+class _FdCapture:
+    """Capture what C code writes to file descriptors 1/2 while a command runs.
+
+    Headless PyMOL prints its command feedback ("Executive: RMSD = ...", "ObjectMolecule: ...") straight to
+    the C stdout, which neither ``sys.stdout`` nor ``cmd._get_feedback()`` ever sees.
+    """
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self.text = ""
+        self._tmp = None
+        self._saved = None
+
+    def __enter__(self):
+        if not self.enabled:
+            return self
+        try:
+            sys.__stdout__.flush()
+            sys.__stderr__.flush()
+        except Exception:
+            pass
+        try:
+            self._tmp = tempfile.TemporaryFile(mode="w+b")
+            self._saved = (os.dup(1), os.dup(2))
+            os.dup2(self._tmp.fileno(), 1)
+            os.dup2(self._tmp.fileno(), 2)
+        except Exception:
+            self._tmp = None
+            self._saved = None
+        return self
+
+    @staticmethod
+    def _flush_c():
+        try:
+            import ctypes
+            if sys.platform.startswith("win"):
+                ctypes.cdll.msvcrt.fflush(None)
+            else:
+                ctypes.CDLL(None).fflush(None)
+        except Exception:
+            pass
+
+    def __exit__(self, *exc):
+        if self._tmp is None:
+            return False
+        self._flush_c()
+        try:
+            os.dup2(self._saved[0], 1)
+            os.dup2(self._saved[1], 2)
+            os.close(self._saved[0])
+            os.close(self._saved[1])
+            self._tmp.seek(0)
+            self.text = self._tmp.read().decode("utf-8", "replace")
+        except Exception:
+            self.text = ""
+        finally:
+            try:
+                self._tmp.close()
+            except Exception:
+                pass
+        for line in self.text.splitlines():
+            if line.strip():
+                _feedback.append((time.time(), _strip_ansi(line)))
+        return False
+
+
+def _undo_guard(changes):
+    """Work around a PyMOL 3.1 bug: once the undo history is active, deleting an object and reloading the same
+    name leaves the live object unselectable ("Invalid selection name") as soon as the undo record of the
+    deletion is evicted (about 30 undoable commands later).  Headless sessions have no user who could undo, so
+    undo stays disabled; in the GUI the history is cleared whenever an agent command removed objects."""
+    cmd = _cmd()
+    try:
+        if not is_gui():
+            if cmd.undo_is_enabled():
+                cmd.undo_disable()
+            return
+        if any(c.get("change") == "objects_removed" for c in (changes or [])) and cmd.undo_is_enabled():
+            cmd.undo_clear_cache()
+    except Exception:
+        pass
+
+
 def is_gui() -> bool:
     try:
         return not int(getattr(_pymol().invocation.options, "no_gui", 0))
@@ -125,7 +229,8 @@ def _qtwindow():
 
 
 def _log(msg: str):
-    _feedback.append((time.time(), msg))
+    if not isinstance(sys.stdout, _StdoutRecorder):
+        _feedback.append((time.time(), msg))
     try:
         print(msg)
     except Exception:
@@ -215,6 +320,8 @@ def _decode_color_value(v, color_names=None):
                 if i == v:
                     name = n
                     break
+        if name is not None and re.match(r"^[a-z]\d{3,4}$", name):
+            name = None          # spectrum / auto colour slot: report the nearest real colour name instead
         if name is None and rgb:
             try:
                 from pymol import colornames  # noqa: F401  (not in every build)
@@ -223,12 +330,14 @@ def _decode_color_value(v, color_names=None):
             # last resort: nearest of the standard palette names PyMOL ships
             best, bd = None, 1e9
             for n, i in cmd.get_color_indices():
+                if re.match(r"^[a-z]\d{3,4}$", n):
+                    continue
                 t = cmd.get_color_tuple(i)
                 if t:
                     d = sum((a - b) ** 2 for a, b in zip(t, rgb))
                     if d < bd:
                         best, bd = n, d
-            name = best if bd < 0.002 else None
+            name = best if bd < 0.02 else None
         return name or "index_%d" % v, [int(round(x * 255)) for x in rgb] if rgb else None
     except Exception:
         return str(v), None
@@ -302,8 +411,35 @@ def fingerprint():
         n_frames = cmd.count_frames()
     except Exception:
         n_frames = 0
+    settings = {}
+    for s_ in INTERESTING_SETTINGS:
+        try:
+            settings[s_] = _setting_value(s_)
+        except Exception:
+            pass
+    obj_colors = {}
+    levels = {}
+    for o in objs:
+        if o in n_atoms:
+            continue
+        try:
+            typ = cmd.get_type(o)
+            if typ in ("object:mesh", "object:surface", "object:map", "object:slice", "object:volume", "object:cgo"):
+                obj_colors[o] = cmd.get_object_color_index(o)
+            if typ in ("object:mesh", "object:surface"):
+                levels[o] = round(float(cmd.isolevel(o, 0.0, query=1)), 4)
+        except Exception:
+            pass
+    try:
+        viewport = tuple(int(x) for x in cmd.get_viewport())
+    except Exception:
+        viewport = None
     fp = {
         "objects": objs,
+        "settings": settings,
+        "obj_colors": obj_colors,
+        "levels": levels,
+        "viewport": viewport,
         "enabled": enabled,
         "selections": sels,
         "n_atoms": n_atoms,
@@ -351,6 +487,21 @@ def diff_fingerprints(a, b):
     for o, col in b.get("colours", {}).items():
         if o in a.get("colours", {}) and a["colours"][o] != col:
             ch.append({"change": "colours", "object": o, "detail": "atom/object colours changed"})
+    for o, col in b.get("obj_colors", {}).items():
+        if o in a.get("obj_colors", {}) and a["obj_colors"][o] != col:
+            ch.append({"change": "colours", "object": o, "detail": "object colour changed",
+                       "to": _decode_color_value(col)[0]})
+    for o, lv in b.get("levels", {}).items():
+        if o in a.get("levels", {}) and a["levels"][o] != lv:
+            ch.append({"change": "isolevel", "object": o, "from": a["levels"][o], "to": lv})
+    sa_ = a.get("settings", {})
+    changed_settings = {k: v for k, v in b.get("settings", {}).items() if k in sa_ and sa_[k] != v}
+    if changed_settings:
+        ch.append({"change": "settings", "settings": {k: {"from": _display_setting_value(k, sa_[k]),
+                                                           "to": _display_setting_value(k, v)}
+                                                       for k, v in changed_settings.items()}})
+    if a.get("viewport") and b.get("viewport") and a["viewport"] != b["viewport"]:
+        ch.append({"change": "viewport", "from": list(a["viewport"]), "to": list(b["viewport"])})
     sa = [s for s in b["selections"] if s not in a["selections"]]
     sr = [s for s in a["selections"] if s not in b["selections"]]
     if sa:
@@ -368,16 +519,29 @@ def diff_fingerprints(a, b):
     return ch
 
 
+def _display_setting_value(name, v):
+    if name.endswith("color") or name == "bg_rgb":
+        try:
+            cname, rgb = _decode_color_value(v)
+            return {"name": cname, "rgb": rgb}
+        except Exception:
+            return v
+    return v
+
+
 def _describe_view_change(a, b):
     rot = any(abs(a[i] - b[i]) > 1e-3 for i in range(9))
-    cam = any(abs(a[i] - b[i]) > 1e-3 for i in range(9, 12))
+    zoom = abs(a[11] - b[11]) > 1e-3
+    pan = any(abs(a[i] - b[i]) > 1e-3 for i in range(9, 11))
     origin = any(abs(a[i] - b[i]) > 1e-3 for i in range(12, 15))
     clip = any(abs(a[i] - b[i]) > 1e-3 for i in range(15, 17))
     bits = []
     if rot:
         bits.append("rotated")
-    if cam:
-        bits.append("zoom/pan changed (distance %.1f -> %.1f)" % (-a[11], -b[11]))
+    if zoom:
+        bits.append("zoomed (camera distance %.1f -> %.1f)" % (-a[11], -b[11]))
+    if pan:
+        bits.append("panned (camera offset %.1f, %.1f -> %.1f, %.1f)" % (a[9], a[10], b[9], b[10]))
     if origin:
         bits.append("rotation origin moved")
     if clip:
@@ -400,7 +564,7 @@ def op_ping(args):
     busy = not _lock.acquire(blocking=False)
     if not busy:
         _lock.release()
-    out = {"app": "pymol", "version": version, "pid": os.getpid(), "gui": is_gui(),
+    out = {"app": "pymol", "version": version, "pid": os.getpid(), "gui": is_gui(), "watermark": _unlicensed(),
            "events_seq": _bridge.events.seq if _bridge else 0, "cwd": os.getcwd(), "main_thread_busy": busy,
            "name": _bridge.name if _bridge else "", "last_activity": _bridge.last_activity if _bridge else None,
            "window_active": _window_active}
@@ -423,6 +587,7 @@ def _run_one(line: str, echo: bool, log: bool):
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out_tee, err_tee
     t0 = time.time()
+    fdcap = _FdCapture(enabled=not is_gui())
     try:
         if echo:
             try:
@@ -430,12 +595,13 @@ def _run_one(line: str, echo: bool, log: bool):
                 colorprinting.parrot("PyMOL>" + line)
             except Exception:
                 pass
-        result = cmd._parser.parse(line, 0)
+        with fdcap:
+            result = cmd._parser.parse(line, 0)
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     post = cmd._get_feedback() or []
     _show_in_gui(post)
-    text = _strip_ansi(out_tee.getvalue() + err_tee.getvalue())
+    text = _strip_ansi(out_tee.getvalue() + err_tee.getvalue() + fdcap.text)
     lines = [l for l in text.splitlines() if l.strip()] + [_strip_ansi(l) for l in post if l.strip() and not _strip_ansi(l).startswith("PyMOL>")]
     if log:
         try:
@@ -466,12 +632,13 @@ def op_run(args):
         r = _run_one(c.strip(), echo, log)
         results.append(r)
         if _bridge:
-            _bridge.events.add("agent_command", command=c.strip(), ok=r["ok"])
+            _bridge.events.add("agent_command", command=c.strip(), ok=r["ok"], error=r.get("error"))
         if not r["ok"] and stop_on_error:
             break
     after = fingerprint()
     changes = diff_fingerprints(before, after)
     _last_fp = after
+    _undo_guard(changes)
     return {"results": results, "all_ok": all(r["ok"] for r in results), "changes": changes,
             "executed": len(results), "requested": len(cmds)}
 
@@ -489,8 +656,10 @@ def op_python(args):
     error = None
     tb = None
     t0 = time.time()
+    fdcap = _FdCapture(enabled=not is_gui())
     try:
-        exec(compile(code, "<molmcp>", "exec"), ns, ns)
+        with fdcap:
+            exec(compile(code, "<molmcp>", "exec"), ns, ns)
     except (Exception, SystemExit, KeyboardInterrupt) as e:
         error = "%s: %s" % (type(e).__name__, e)
         tb = traceback.format_exc()
@@ -501,11 +670,13 @@ def op_python(args):
     after = fingerprint()
     global _last_fp
     _last_fp = after
+    changes = diff_fingerprints(before, after)
+    _undo_guard(changes)
     if _bridge:
-        _bridge.events.add("agent_python", ok=error is None, chars=len(code))
-    return {"ok": error is None, "stdout": _strip_ansi(out_tee.getvalue() + err_tee.getvalue() + "\n".join(post)),
+        _bridge.events.add("agent_python", ok=error is None, chars=len(code), error=error)
+    return {"ok": error is None, "stdout": _strip_ansi(out_tee.getvalue() + err_tee.getvalue() + fdcap.text + "\n".join(post)),
             "result": bridgecore.json_safe(ns.get("result")), "error": error, "traceback": tb,
-            "changes": diff_fingerprints(before, after), "ms": round((time.time() - t0) * 1000, 1)}
+            "changes": changes, "ms": round((time.time() - t0) * 1000, 1)}
 
 
 def _view_dict(view):
@@ -541,7 +712,6 @@ def _object_summary(name, detail, color_names):
         info["atoms"] = n
         info["states"] = cmd.count_states("%" + name)
         info["chains"] = cmd.get_chains("%" + name)
-        info["reps_enabled_mask"] = [REP_NAMES.get(i, str(i)) for i in (vis[2] or [])]   # object-level enable mask, not what is drawn
         try:
             info["title"] = cmd.get_title(name, 1)
         except Exception:
@@ -611,7 +781,19 @@ def _object_summary(name, detail, color_names):
                 pass
         if overrides:
             info["setting_overrides"] = overrides
-    elif typ in ("object:map", "object:mesh", "object:surface", "object:slice", "object:volume"):
+    elif typ in ("object:map", "object:mesh", "object:surface", "object:slice", "object:volume", "object:cgo"):
+        try:
+            ci = cmd.get_object_color_index(name)
+            if ci is not None and int(ci) >= 0:
+                cname, rgb = _decode_color_value(ci, color_names)
+                info["color"] = {"name": cname, "rgb": rgb}
+        except Exception:
+            pass
+        if typ in ("object:mesh", "object:surface"):
+            try:
+                info["isolevel"] = round(float(cmd.isolevel(name, 0.0, query=1)), 4)
+            except Exception:
+                pass
         for s in ("mesh_color", "surface_color", "transparency", "mesh_width"):
             try:
                 vo = _setting_value(s, name)
@@ -631,7 +813,12 @@ def op_scene(args):
     names = cmd.get_names("public_objects")
     if only:
         names = [n for n in names if n in only]
-    objects = [_object_summary(n, detail, color_names) for n in names]
+    objects = []
+    for n in names:
+        try:
+            objects.append(_object_summary(n, detail, color_names))
+        except Exception as e:
+            objects.append({"name": n, "error": "%s: %s" % (type(e).__name__, str(e).strip().splitlines()[0] if str(e).strip() else "")})
     sels = []
     for s in cmd.get_names("public_selections"):
         try:
@@ -709,23 +896,32 @@ def op_selection_info(args):
         cmd.iterate(sel, "_data.append((model, chain, resn, resi, resv, name, elem, ss, color, reps))",
                     space={"_data": data})
         for model, chain, resn, resi, resv, name, elem, ss, color, reps in data:
-            d = per_obj.setdefault(model, {}).setdefault(chain, {"atoms": 0, "residues": {}, "elems": Counter(), "ss": Counter()})
+            d = per_obj.setdefault(model, {}).setdefault(chain, {"atoms": 0, "residues": {}, "elems": Counter(), "ss": {}})
             d["atoms"] += 1
             d["residues"][(resi, resn)] = resv
             d["elems"][elem] += 1
             if ss:
-                d["ss"][ss] += 1
+                d["ss"][(resi, resn)] = ss
         objs = []
         for model, chains in per_obj.items():
             cl = []
             for chain, d in sorted(chains.items()):
-                resv = list(d["residues"].values())
+                plain = [rv for (ri, _), rv in d["residues"].items() if ri.lstrip("-").isdigit()]
+                with_icode = sorted({ri for (ri, _) in d["residues"] if not ri.lstrip("-").isdigit()},
+                                    key=lambda r_: (int(re.match(r"-?\d+", r_).group()) if re.match(r"-?\d+", r_) else 0, r_))
+                ranges = _compact_ranges(plain) + with_icode
                 resnames = Counter(rn for (_, rn) in d["residues"].keys())
-                cl.append({"chain": chain, "atoms": d["atoms"], "residues": len(d["residues"]),
-                           "residue_ranges": _compact_ranges(resv)[:40],
-                           "residue_names": dict(resnames.most_common(10)),
-                           "elements": dict(d["elems"].most_common(8)),
-                           "ss": dict(d["ss"])})
+                entry = {"chain": chain, "atoms": d["atoms"], "residues": len(d["residues"]),
+                         "residue_ranges": ranges[:40],
+                         "residue_names": dict(resnames.most_common(10)),
+                         "elements": dict(d["elems"].most_common(8)),
+                         "ss_residues": dict(Counter(d["ss"].values()))}
+                if len(ranges) > 40:
+                    entry["residue_ranges_truncated"] = True
+                    entry["residue_ranges_total"] = len(ranges)
+                if with_icode:
+                    entry["insertion_codes"] = with_icode[:40]
+                cl.append(entry)
             objs.append({"object": model, "chains": cl})
         out["by_object"] = objs
         out["residues"] = sum(len(d["residues"]) for ch in per_obj.values() for d in ch.values())
@@ -782,12 +978,27 @@ def _png(width, height, ray, dpi, transparent):
 MAX_RENDER_PIXELS = 16_000_000
 
 
-def op_render(args):
+def _frame_size(args):
+    """Explicit size, or the current viewport when 0 (PyMOL would otherwise hand back its cached image)."""
     cmd = _cmd()
     width = int(args.get("width") or 0)
     height = int(args.get("height") or 0)
     if (width and width < 16) or (height and height < 16) or width < 0 or height < 0:
         raise ValueError("width/height must be >= 16 (or 0 for the viewport size)")
+    if not width or not height:
+        try:
+            vw, vh = (int(x) for x in cmd.get_viewport())
+        except Exception:
+            vw, vh = 0, 0
+        if vw < 16 or vh < 16:
+            vw, vh = 800, 600
+        width, height = width or vw, height or vh
+    return width, height
+
+
+def op_render(args):
+    cmd = _cmd()
+    width, height = _frame_size(args)
     if width * height > MAX_RENDER_PIXELS:
         raise ValueError("frame too large (%dx%d > %d pixels)" % (width, height, MAX_RENDER_PIXELS))
     ray = int(bool(args.get("ray", False)))
@@ -806,27 +1017,47 @@ def op_render(args):
     if _bridge:
         _bridge.events.add("agent_render", width=width, height=height, ray=ray)
     return {"png": data, "path": path, "ray": bool(ray), "background": {"rgb": bg, "name": bg_name},
-            "transparent": transparent, "ms": round((time.time() - t0) * 1000, 1), "viewport": list(cmd.get_viewport())}
+            "transparent": transparent, "ms": round((time.time() - t0) * 1000, 1), "viewport": list(cmd.get_viewport()),
+            "width": width, "height": height, "watermark": _unlicensed()}
 
 
 def op_render_ids(args):
     """ID pass: draw every item in its own flat colour, restore everything afterwards."""
     cmd = _cmd()
     items = args.get("items") or []
-    width = int(args.get("width") or 0)
-    height = int(args.get("height") or 0)
+    width, height = _frame_size(args)
     ray = int(bool(args.get("ray", False)))
     solo = bool(args.get("solo", False))
     if not items:
         raise ValueError("items required: [{label, selection, rgb}]")
-    if width * height > MAX_RENDER_PIXELS or (width and width < 16) or (height and height < 16):
+    if width * height > MAX_RENDER_PIXELS:
         raise ValueError("bad frame size %dx%d" % (width, height))
     t_start = time.time()
-    undo_state = _setting_value("suspend_undo")
-    try:
-        cmd.set("suspend_undo", 1, quiet=1)
-    except Exception:
-        undo_state = None
+    _undo_guard(None)            # headless: undo stays off (PyMOL 3.1 name-reuse bug, see _undo_guard)
+    all_objects = cmd.get_names("objects")
+    molecular = {o for o in all_objects if cmd.get_type(o) == "object:molecule"}
+
+    def _bare_object(selection):
+        """Object name when the selection is just one (non-molecular) object, else None."""
+        name = selection.strip()
+        while name.startswith("(") and name.endswith(")"):
+            name = name[1:-1].strip()
+        name = name.lstrip("%").strip()
+        if name in all_objects and name not in molecular:
+            return name
+        return None
+
+    errors = {}
+    nonmol = {}                     # item index -> object name
+    nonmol_colors = {}              # object name -> original colour index
+    for i, it in enumerate(items):
+        name = _bare_object(str(it.get("selection", "")))
+        if name:
+            nonmol[i] = name
+            try:
+                nonmol_colors[name] = cmd.get_object_color_index(name)
+            except Exception:
+                nonmol_colors[name] = None
     cmd.scene("_molmcp_idpass", "store", view=0, active=1, color=1, rep=1, frame=0, quiet=1)
     saved_global = {}
     obj_overrides = []           # (setting, object, value) to restore
@@ -862,43 +1093,97 @@ def op_render_ids(args):
                         cmd.set(s, 0, obj, quiet=1)
                 except Exception:
                     pass
+        rep_overrides_present = {}
+        for s in REP_COLOR_SETTINGS:
+            try:
+                rep_overrides_present[s] = (any(_setting_value(s, o) not in (None, -1, (-1,)) for o in involved_objects)
+                                            or _setting_value(s) not in (None, -1, (-1,)))
+            except Exception:
+                rep_overrides_present[s] = False
         for i, it in enumerate(items):
             r, g, b = it["rgb"]
             cname = "_molmcp_id%d" % i
             cmd.set_color(cname, [r / 255.0, g / 255.0, b / 255.0], quiet=1)
-            sel = "(%s)" % it["selection"]
-            cmd.color(cname, sel, quiet=1)
-            # only override rep colours that are actually set somewhere (atom-level writes are O(N) each)
-            for s in REP_COLOR_SETTINGS:
-                try:
-                    if any(_setting_value(s, o) not in (None, -1, (-1,)) for o in involved_objects) or _setting_value(s) not in (None, -1, (-1,)):
-                        cmd.set(s, cname, sel, quiet=1)
-                except Exception:
-                    pass
-            for obj in (cmd.get_object_list(sel) or []):
-                for s in OBJ_COLOR_SETTINGS:
-                    try:
-                        cmd.set(s, cname, obj, quiet=1)
-                    except Exception:
-                        pass
+            try:
+                if i in nonmol:
+                    # mesh / surface / map / cgo objects are coloured as a whole, by name
+                    cmd.color(cname, nonmol[i], quiet=1)
+                    for s in ("mesh_color", "surface_color", "dot_color"):
+                        try:
+                            cmd.set(s, cname, nonmol[i], quiet=1)
+                        except Exception:
+                            pass
+                    continue
+                sel = "(%s)" % it["selection"]
+                cmd.color(cname, sel, quiet=1)
+                # only override rep colours that are actually set somewhere (atom-level writes are O(N) each)
+                for s in REP_COLOR_SETTINGS:
+                    if rep_overrides_present.get(s):
+                        try:
+                            cmd.set(s, cname, sel, quiet=1)
+                        except Exception:
+                            pass
+                for obj in (cmd.get_object_list(sel) or []):
+                    for s in OBJ_COLOR_SETTINGS:
+                        try:
+                            cmd.set(s, cname, obj, quiet=1)
+                        except Exception:
+                            pass
+            except Exception as e:
+                errors[it.get("label", str(i))] = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
         composite = _png(width, height, ray, -1, False)
         solos = {}
         if solo:
             for i, it in enumerate(items):
+                if it.get("label", str(i)) in errors:
+                    continue
                 sel = "(%s)" % it["selection"]
                 cmd.scene("_molmcp_solo", "store", view=0, active=1, color=0, rep=1, frame=0, quiet=1)
                 try:
-                    cmd.hide("everything", "not %s" % sel)
-                    objs_keep = set(cmd.get_object_list(sel) or [])
-                    for o in cmd.get_names("objects", enabled_only=1):
-                        if o not in objs_keep:
-                            cmd.disable(o)
+                    if i in nonmol:
+                        objs_keep = {nonmol[i]}
+                        for o in cmd.get_names("objects", enabled_only=1):
+                            if o not in objs_keep:
+                                cmd.disable(o)
+                    else:
+                        cmd.hide("everything", "not %s" % sel)
+                        objs_keep = set(cmd.get_object_list(sel) or [])
+                        for o in cmd.get_names("objects", enabled_only=1):
+                            if o not in objs_keep:
+                                cmd.disable(o)
                     solos[it["label"]] = _png(width, height, ray, -1, False)
+                except Exception as e:
+                    errors[it.get("label", str(i))] = "solo pass: " + (str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__)
                 finally:
                     cmd.scene("_molmcp_solo", "recall", animate=0, quiet=1)
                     cmd.scene("_molmcp_solo", "clear", quiet=1)
     finally:
         for i, it in enumerate(items):
+            if i in nonmol:
+                name = nonmol[i]
+                for s in ("mesh_color", "surface_color", "dot_color"):
+                    try:
+                        cmd.unset(s, name, quiet=1)
+                    except Exception:
+                        pass
+                ci = nonmol_colors.get(name)
+                if ci is not None and int(ci) >= 0:
+                    try:
+                        restore = None
+                        for n_, i_ in cmd.get_color_indices(all=1):
+                            if i_ == ci:
+                                restore = n_
+                                break
+                        if restore is None:
+                            t = cmd.get_color_tuple(ci)
+                            if t:
+                                restore = "_molmcp_restore%d" % i
+                                cmd.set_color(restore, list(t), quiet=1)
+                        if restore:
+                            cmd.color(restore, name, quiet=1)
+                    except Exception:
+                        pass
+                continue
             sel = "(%s)" % it["selection"]
             for s in REP_COLOR_SETTINGS:
                 try:
@@ -932,12 +1217,8 @@ def op_render_ids(args):
                 pass
         cmd.scene("_molmcp_idpass", "recall", animate=0, quiet=1)
         cmd.scene("_molmcp_idpass", "clear", quiet=1)
-        if undo_state is not None:
-            try:
-                cmd.set("suspend_undo", undo_state, quiet=1)
-            except Exception:
-                pass
     return {"png": composite, "solo": solos, "legend": {"#%02x%02x%02x" % tuple(it["rgb"]): it["label"] for it in items},
+            "errors": errors, "width": width, "height": height, "watermark": _unlicensed(),
             "ms": round((time.time() - t_start) * 1000, 1)}
 
 
@@ -949,8 +1230,13 @@ def op_events(args):
     _last_fp = fp
     if _bridge and changes:
         _bridge.events.add("state_change", changes=changes)
-    evs = _bridge.events.since(since, limit=int(args.get("limit", 300))) if _bridge else []
-    return {"seq": _bridge.events.seq if _bridge else 0, "events": evs, "changes_now": changes}
+    limit = int(args.get("limit", 300))
+    evs, truncated = _bridge.events.since(since, limit=limit) if _bridge else ([], False)
+    out = {"seq": _bridge.events.seq if _bridge else 0, "events": evs, "changes_now": changes}
+    if truncated:
+        out["truncated"] = True
+        out["next_since"] = evs[-1]["seq"] if evs else since
+    return out
 
 
 def op_log(args):
@@ -1055,6 +1341,8 @@ def dispatch(op, args):
     if op in ("ping", "log", "quit", "agent_ask"):
         return fn(args)
     with _lock:
+        if not is_gui():
+            _undo_guard(None)
         return on_main(lambda: fn(args))
 
 
@@ -1218,6 +1506,15 @@ class _StdoutRecorder:
 def launch(port=None):
     """Entry point used by the launcher script (works headless and in the GUI)."""
     _register_commands()
-    if not is_gui() and not isinstance(sys.stdout, _StdoutRecorder):
-        sys.stdout = _StdoutRecorder(sys.stdout)
+    if not is_gui():
+        if not isinstance(sys.stdout, _StdoutRecorder):
+            sys.stdout = _StdoutRecorder(sys.stdout)
+        try:
+            cmd = _cmd()
+            if str(_setting_value("fetch_path") or ".") in (".", ""):
+                fetch_dir = os.path.join(bridgecore.molmcp_home(), "fetch")
+                os.makedirs(fetch_dir, exist_ok=True)
+                cmd.set("fetch_path", fetch_dir, quiet=1)
+        except Exception:
+            pass
     return start(port)

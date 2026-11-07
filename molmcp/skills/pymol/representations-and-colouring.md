@@ -98,14 +98,17 @@ Palettes: `rainbow rainbow_rev blue_white_red red_white_blue blue_red green_whit
 and any space-separated colour list (`spectrum b, red yellow white, prot`). Set `minimum`/`maximum`
 explicitly so two structures share a scale (pLDDT: `spectrum b, red_yellow_green, prot, 50, 90`).
 
-B-factor putty:
+B-factor putty (keeps your other representations and cartoon settings):
 ```pml
-preset.b_factor_putty("prot")
+cartoon putty, prot
+spectrum b, blue_white_red, prot and name CA+P
 set cartoon_putty_scale_min, 0.5
 set cartoon_putty_scale_max, 4
 set cartoon_putty_transform, 0
 ```
-(`preset.b_factor_putty` = `cartoon putty` + `spectrum b` on CA/P atoms; transform 0 normalised, 3 absolute.)
+`preset.b_factor_putty("prot")` does the same but is a *preset*: it hides every other representation of the
+selection, re-enables cartoon and overrides cartoon settings you set earlier, so run it first and style
+afterwards. Transform 0 = normalised across the selection, 3 = absolute B values.
 
 ## Pitfalls
 - `color` sets atom colours; a cartoon still coloured by `cartoon_color` will not change - `unset` it.

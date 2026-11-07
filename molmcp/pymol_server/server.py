@@ -143,8 +143,11 @@ def render(width: int = 800, height: int = 600, ray: bool = False, transparent: 
 
     Returns the saved PNG path and an analysis: coverage, bounding box, centroid offset, margins, which frame
     edges clip the content, dominant named colours, hue shares, contrast, edge density and an ASCII density map
-    (grid = columns x rows).  ray=True uses the ray tracer (slower, publication quality).  path saves to a
-    specific file.  return_image=True additionally returns the PNG for clients that can display it.
+    (grid = columns x rows, 8-160 x 4-80).  ray=True uses the ray tracer (slower, publication quality); headless
+    PyMOL always ray-traces.  width/height 0 = the current viewport size.  path saves to a specific file (".png"
+    is appended when missing).  return_image=True additionally returns the PNG for clients that can display it.
+    A PyMOL without a valid licence burns an evaluation banner into frames; it is detected, excluded from the
+    analysis and reported under `watermark`.
     """
     return sc.render(SESSION, width, height, path, return_image, grid, {"ray": ray, "transparent": transparent})
 
@@ -196,14 +199,16 @@ def compare_renders(path_a: Optional[str] = None, path_b: Optional[str] = None, 
 @mcp.tool()
 def analyze_image(path: str, grid: str = "48x20") -> str:
     """Numerical analysis of any PNG/JPEG on disk (e.g. a figure the user saved): same report as `render`."""
-    return sc.analyze_image(path, grid)
+    return sc.analyze_image(path, grid, mask_watermark=sc._session_watermark(SESSION))
 
 
 @mcp.tool()
 def events(since: Optional[int] = None, limit: int = 100) -> str:
     """What happened since the last call: commands typed by the user in the GUI, errors, renders, and detected
-    state changes (objects added/removed, view moved, selections).  Also returns `changes_now`, a diff of the
-    scene against the previous snapshot.  `since` = event sequence number (default: continue from last call)."""
+    state changes (objects added/removed, view moved, selections, settings, iso levels).  Failed agent commands
+    carry their error text.  Also returns `changes_now`, a diff of the scene against the previous snapshot.
+    `since` = event sequence number (default: continue from last call); when more than `limit` events are
+    pending the oldest ones are returned with `truncated` and `next_since` to page on."""
     return sc.events(SESSION, since, limit)
 
 

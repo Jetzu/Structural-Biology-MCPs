@@ -107,9 +107,10 @@ class EventLog:
         return self._seq
 
     def since(self, seq: int, limit: int = 500, kinds=None):
+        """Events after ``seq`` in order, at most ``limit`` of them; returns (events, truncated)."""
         with self._lock:
             out = [e for e in self._events if e["seq"] > seq and (not kinds or e["kind"] in kinds)]
-        return out[-limit:]
+        return out[:limit], len(out) > limit
 
 
 class Tee:

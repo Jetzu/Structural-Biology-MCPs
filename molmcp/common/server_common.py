@@ -180,6 +180,10 @@ def status(sess: AppSession) -> str:
                            "`connect(pid=...)` or `connect(name=...)` switches; the user can name a window with "
                            "%s." % (len(instances), sess.app, info.get("pid"),
                                     "`agent_name mywindow` in PyMOL" if sess.app == "pymol" else "`agent name mywindow` in ChimeraX"))
+    elif instances:
+        out["hint"] = ("%d %s window(s) have a bridge but none answered the ping (busy with a long command or showing a "
+                       "dialog). Wait and call `status` again, `connect(pid=...)` once it answers, or close that window; "
+                       "`launch` is refused while such a window exists." % (len(instances), sess.app))
     else:
         out["hint"] = ("No running %s bridge found. Start %s with the molmcp bridge (it auto-starts when the plugin/bundle "
                        "is installed) or call the launch tool." % (sess.app, sess.app))
@@ -223,7 +227,7 @@ def _normalize_commands(commands) -> List[str]:
 
 
 DANGEROUS = {
-    "pymol": re.compile(r"^\s*(q|qu|qui|quit|exit|reinit\w*|syst\w*|pip|conda|cd|rm|/|python\b|cmd\.(quit|system|reinitialize)|@)", re.I),
+    "pymol": re.compile(r"^\s*(?:(?:q|qu|qui|quit|exit|reinit\w*|syst\w*|pip|conda|cd|rm|python|cmd\.(?:quit|system|reinitialize))\b|[/@])", re.I),
     "chimerax": re.compile(r"^\s*(exit|quit|clo\w*\s+sess\w*|pip\b|shell\b|system\b|remotecontrol\b|runscript\b|open\s+\S+\.(py|cxc)\b)", re.I),
 }
 
@@ -314,17 +318,42 @@ def simple_call(sess: AppSession, op: str, **args) -> str:
 
 
 def _grid(grid: str):
+    """Parse "<cols>x<rows>"; raises ValueError for malformed input, clamps to 8-160 x 4-80."""
     try:
-        c, r = grid.lower().split("x")
-        return max(8, min(int(c), 160)), max(4, min(int(r), 80))
+        c, r = str(grid).lower().split("x")
+        c, r = int(c), int(r)
     except Exception:
-        return 48, 20
+        raise ValueError("grid must look like '48x20' (columns x rows), got %r" % (grid,))
+    return max(8, min(c, 160)), max(4, min(r, 80))
+
+
+def _grid_or_error(grid: str):
+    try:
+        cols, rows = _grid(grid)
+    except ValueError as e:
+        return None, None, dumps({"ok": False, "error": str(e)})
+    return cols, rows, None
+
+
+def _session_watermark(sess: AppSession) -> bool:
+    """Whether the connected viewer burns a licence banner into renders (PyMOL without a valid licence)."""
+    v = getattr(sess, "watermark", None)
+    if v is None:
+        try:
+            info = sess.call("status", timeout=10)
+            v = bool(info.get("watermark"))
+        except Exception:
+            v = False
+        sess.watermark = v
+    return v
 
 
 def render(sess: AppSession, width: int, height: int, path: Optional[str], return_image: bool,
            grid: str, extra: dict, tag: str = "render", timeout: float = 600.0, analyze: bool = True):
     from .mcpcompat import Image
-    cols, rows = _grid(grid)
+    cols, rows, gerr = _grid_or_error(grid)
+    if gerr:
+        return gerr
     err = _check_size(width, height)
     if err:
         return dumps({"ok": False, "error": err})
@@ -332,6 +361,8 @@ def render(sess: AppSession, width: int, height: int, path: Optional[str], retur
         r = sess.call("render", timeout=timeout, width=width, height=height, path=path, **extra)
     except (BridgeError, NotConnected) as e:
         return dumps({"ok": False, "error": str(e)})
+    if "watermark" in r:
+        sess.watermark = bool(r["watermark"])
     png = base64.b64decode(r["png"])
     saved = r.get("path") or sess.save_png(png, tag)
     if not r.get("path"):
@@ -343,8 +374,11 @@ def render(sess: AppSession, width: int, height: int, path: Optional[str], retur
         if k in r:
             out[k] = r[k]
     if analyze:
-        a = ia.analyze_render(png, grid_cols=cols, grid_rows=rows, bg_rgb=r["background"]["rgb"])
+        a = ia.analyze_render(png, grid_cols=cols, grid_rows=rows, bg_rgb=r["background"]["rgb"],
+                              mask_watermark=bool(r.get("watermark")))
         out["analysis"] = a
+        if r.get("watermark"):
+            out["watermark"] = a.get("watermark")
     else:
         rgba = ia.load_rgba(png)
         out["width"], out["height"] = int(rgba.shape[1]), int(rgba.shape[0])
@@ -378,7 +412,9 @@ def layout(sess: AppSession, items: List[dict], width: int, height: int, occlusi
            grid: str, extra: dict, timeout: float = 900.0):
     """items: [{label, <spec_key>: ...}] - the spec key is app specific ('selection' or 'spec')."""
     from .mcpcompat import Image
-    cols, rows = _grid(grid)
+    cols, rows, gerr = _grid_or_error(grid)
+    if gerr:
+        return gerr
     err = _check_size(width, height)
     if err:
         return dumps({"ok": False, "error": err})
@@ -392,13 +428,20 @@ def layout(sess: AppSession, items: List[dict], width: int, height: int, occlusi
     except (BridgeError, NotConnected) as e:
         return dumps({"ok": False, "error": str(e)})
     png = base64.b64decode(r["png"])
-    seg = ia.analyze_segmentation(png, r["legend"], grid_cols=cols, grid_rows=rows)
+    wm = bool(r.get("watermark"))
+    if "watermark" in r:
+        sess.watermark = wm
+    seg = ia.analyze_segmentation(png, r["legend"], grid_cols=cols, grid_rows=rows, mask_watermark=wm)
     out: Dict[str, Any] = {"items_requested": [it["label"] for it in items], "layout": seg}
+    if wm:
+        out["watermark"] = "PyMOL runs without a valid licence; its evaluation banner was excluded from the ID pass"
+    if r.get("errors"):
+        out["item_errors"] = r["errors"]
     if occlusion and r.get("solo"):
         solo_counts = {}
         for label, b64 in r["solo"].items():
             legend = {k: v for k, v in r["legend"].items() if v == label}
-            s = ia.analyze_segmentation(base64.b64decode(b64), legend, grid_cols=8, grid_rows=4)
+            s = ia.analyze_segmentation(base64.b64decode(b64), legend, grid_cols=8, grid_rows=4, mask_watermark=wm)
             solo_counts[label] = s["items"][0]["pixels"] if s["items"] else 0
         out["occlusion"] = ia.occlusion_report(seg, solo_counts)
     saved = sess.save_png(png, "layout")
@@ -410,7 +453,9 @@ def layout(sess: AppSession, items: List[dict], width: int, height: int, occlusi
 
 
 def compare(sess: AppSession, path_a: Optional[str], path_b: Optional[str], grid: str) -> str:
-    cols, rows = _grid(grid)
+    cols, rows, gerr = _grid_or_error(grid)
+    if gerr:
+        return gerr
     if not path_a or not path_b:
         renders = list(sess.renders)
         if len(renders) < 2:   # fresh server process: fall back to the newest files on disk
@@ -425,17 +470,20 @@ def compare(sess: AppSession, path_a: Optional[str], path_b: Optional[str], grid
         path_a = path_a or renders[-2]
         path_b = path_b or renders[-1]
     try:
-        d = ia.diff_images(os.path.expanduser(path_a), os.path.expanduser(path_b), grid_cols=cols, grid_rows=rows)
+        d = ia.diff_images(os.path.expanduser(path_a), os.path.expanduser(path_b), grid_cols=cols, grid_rows=rows,
+                           mask_watermark=_session_watermark(sess))
     except Exception as e:
         return dumps({"ok": False, "error": str(e)})
     d["a"], d["b"] = path_a, path_b
     return dumps(d)
 
 
-def analyze_image(path: str, grid: str) -> str:
-    cols, rows = _grid(grid)
+def analyze_image(path: str, grid: str, mask_watermark: bool = False) -> str:
+    cols, rows, gerr = _grid_or_error(grid)
+    if gerr:
+        return gerr
     try:
-        a = ia.analyze_render(os.path.expanduser(path), grid_cols=cols, grid_rows=rows)
+        a = ia.analyze_render(os.path.expanduser(path), grid_cols=cols, grid_rows=rows, mask_watermark=mask_watermark)
     except Exception as e:
         return dumps({"ok": False, "error": str(e)})
     a["path"] = path
@@ -449,7 +497,10 @@ def events(sess: AppSession, since: Optional[int], limit: int) -> str:
         r = sess.call("events", since=sess.events_seq if since is None else since, limit=limit)
     except (BridgeError, NotConnected) as e:
         return dumps({"ok": False, "error": str(e)})
-    sess.events_seq = int(r.get("seq", sess.events_seq))
+    # advance the cursor only past what was returned: a truncated page is continued with its next_since
+    sess.events_seq = int(r.get("next_since", r.get("seq", sess.events_seq)) if r.get("truncated") else r.get("seq", sess.events_seq))
+    if r.get("truncated"):
+        r["note"] = "more events than `limit`: call events(since=%d) for the rest" % sess.events_seq
     for e in r.get("events", []):
         e["t"] = _dt.datetime.fromtimestamp(e["t"]).strftime("%H:%M:%S.%f")[:-3]
     note = instance_note(sess)
@@ -511,7 +562,12 @@ def skill_text(app: str, name: str) -> str:
     from . import skills as sk
     s = sk.get_skill(app, name)
     if not s:
-        return dumps({"ok": False, "error": "no skill named %r" % name, "available": [x["name"] for x in sk.list_skills(app)]})
+        import difflib
+        names = [x["name"] for x in sk.list_skills(app)]
+        close = difflib.get_close_matches(name, names, n=5, cutoff=0.5)
+        if not close:
+            close = [n for n in names if any(t and t in n for t in re.split(r"[-_ ]+", name.lower()))][:5]
+        return dumps({"ok": False, "error": "no skill named %r" % name, "did_you_mean": close, "available": names})
     return "# %s\n(%s skill '%s'%s)\n\n%s" % (s["title"], s["app"], s["name"], "" if s["source"] == "builtin" else ", user file " + s["path"], s["body"])
 
 
@@ -573,7 +629,11 @@ def python_json(sess: AppSession, code: str, timeout: float = 600.0) -> str:
     except (BridgeError, NotConnected) as e:
         return dumps({"ok": False, "error": str(e)})
     if not r.get("ok"):
-        return dumps({"ok": False, "error": r.get("error"), "traceback": _trim(r.get("traceback"), 2000), "stdout": _trim(r.get("stdout"), 2000)})
+        err = r.get("error") or "python code failed"
+        if err.startswith(("ValueError:", "KeyError:", "TypeError:")):
+            return dumps({"ok": False, "error": err.split(":", 1)[1].strip() if ":" in err else err,
+                          "stdout": _trim(r.get("stdout"), 2000)})
+        return dumps({"ok": False, "error": err, "traceback": _trim(r.get("traceback"), 2000), "stdout": _trim(r.get("stdout"), 2000)})
     out = r.get("result")
     if isinstance(out, dict):
         out.setdefault("ok", True)
