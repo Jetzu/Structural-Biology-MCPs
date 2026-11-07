@@ -17,14 +17,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install open-source PyMOL (wheel) into the runner's Python
+      - name: Download the open-source PyMOL wheel (cgohlke)
+        shell: bash
+        run: |
+          WHL=pymol-3.2.0a0-cp311-cp311-win_amd64.whl
+          curl -fsSL -o "$WHL" "https://github.com/cgohlke/pymol-open-source-wheels/releases/download/v2026.4.5/$WHL"
+          ls -la "$WHL"
+      - name: Install numpy, pillow and the PyMOL wheel into the runner's Python
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          curl -sSL -o pymol.whl https://github.com/cgohlke/pymol-open-source-wheels/releases/download/v2026.4.5/pymol-3.2.0a0-cp311-cp311-win_amd64.whl
           python -m pip install numpy pillow
-          python -m pip install --no-deps pymol.whl
-          python -c "import pymol, pymol2, sys; print('pymol import ok on', sys.platform)"
+          python -m pip install --no-deps pymol-3.2.0a0-cp311-cp311-win_amd64.whl
+      - name: Check that PyMOL imports (library mode) on Windows
+        shell: bash
+        run: |
+          python -c "import pymol, pymol2, sys; print('pymol import ok on', sys.platform, pymol.__file__)"
           echo "PYMOL_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
       - name: Bootstrap installer (venv, package, plugin, CLI registrations)
         run: python install.py --pymol --claude --codex
