@@ -25,7 +25,7 @@ runs *inside* the viewer (a PyMOL plugin / a ChimeraX bundle), so the agent gets
   exactly like `/model` in Claude Code; providers whose CLI is not installed are greyed out, so a Claude-only or
   Codex-only setup just works.  Slash commands: `/model`, `/clear`, `/claude`, `/codex`, `/skills`, `/stop`,
   `/help`; Enter sends, Shift+Enter newline, Esc interrupts, ↑/↓ history, Tab accepts a suggestion.
-* **Skills** — 41 reviewed instruction files the agent reads on demand (`skills`, `skill`): publication rendering,
+* **Skills** — 43 reviewed instruction files the agent reads on demand (`skills`, `skill`): publication rendering,
   representations and colouring, selections / atom specs, surfaces and electrostatics, alignment, movies and
   trajectories, maps and cryo-EM, ligand sites and docking poses, hydrogen bonds / contacts / interfaces, AlphaFold,
   mutagenesis, symmetry and assemblies, markers, attributes, presets and lighting, multi-panel figures, large
