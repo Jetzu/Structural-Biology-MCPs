@@ -1027,6 +1027,7 @@ def start(port=None, quiet=0):
     """Start the bridge (idempotent). Returns connection info dict."""
     global _bridge
     if _bridge is not None and _bridge.running:      # fast path without locks (called on the GUI thread)
+        _bridge.ensure_discoverable()
         if not int(quiet):
             _log(" Agent bridge already running on port %d" % _bridge.port)
         return _bridge.connection_info()
@@ -1069,6 +1070,7 @@ def status():
     if _bridge is None or not _bridge.running:
         _log(" Agent bridge: not running (use agent_start)")
         return None
+    _bridge.ensure_discoverable()
     info = _bridge.connection_info()
     _log(" Agent bridge: running on http://%s:%d  pid %d  events %d  (connection file: %s)" % (
         info["host"], info["port"], info["pid"], _bridge.events.seq, _bridge.instance_file))

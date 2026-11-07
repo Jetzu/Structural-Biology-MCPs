@@ -1127,6 +1127,7 @@ def _install_triggers(session):
 def start(session, port=None, quiet=False):
     global _bridge, _session, _history_log, _last_fp
     if _bridge is not None and _bridge.running:      # fast path, no locks (may be called on the main thread)
+        _bridge.ensure_discoverable()
         if not quiet:
             _log("molmcp agent bridge already running on port %d" % _bridge.port)
         return _bridge.connection_info()
@@ -1178,6 +1179,7 @@ def status(session):
     if _bridge is None or not _bridge.running:
         _log("molmcp agent bridge: not running (use 'agent start')")
         return None
+    _bridge.ensure_discoverable()
     info = _bridge.connection_info()
     _log("molmcp agent bridge: running on http://%s:%d  pid %d  events %d  (connection file: %s)" % (
         info["host"], info["port"], info["pid"], _bridge.events.seq, _bridge.instance_file))

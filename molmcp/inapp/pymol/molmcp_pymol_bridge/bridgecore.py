@@ -260,9 +260,25 @@ class Bridge:
         self._thread.start()
         self.port = server.server_address[1]
         self._write_instance_file()
+        self._heartbeat = threading.Thread(target=self._heartbeat_loop, name="molmcp-heartbeat", daemon=True)
+        self._heartbeat.start()
         self.events.add("bridge_started", port=self.port)
         self._log("molmcp bridge for %s listening on http://%s:%d (pid %d)" % (self.app, self.host, self.port, os.getpid()))
         return self.host, self.port
+
+    def _heartbeat_loop(self):
+        """Re-create the discovery file if something removed it (self-healing discovery)."""
+        while self._server is not None:
+            time.sleep(15)
+            try:
+                if self._server is not None and self.instance_file and not os.path.exists(self.instance_file):
+                    self._write_instance_file()
+            except Exception:
+                pass
+
+    def ensure_discoverable(self):
+        if self.running and (not self.instance_file or not os.path.exists(self.instance_file)):
+            self._write_instance_file()
 
     def stop(self):
         if self._server is None:

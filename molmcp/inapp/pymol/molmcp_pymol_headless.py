@@ -41,10 +41,18 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     molmcp_pymol_bridge.stop()
-    try:
-        p.stop()
-    except Exception:
-        pass
+    # p.stop() can block on PyMOL's shutdown in library mode; never leave an orphan behind
+    import threading
+
+    def _stop():
+        try:
+            p.stop()
+        except Exception:
+            pass
+    t = threading.Thread(target=_stop, daemon=True)
+    t.start()
+    t.join(10)
+    os._exit(0)
 
 
 if __name__ == "__main__":
