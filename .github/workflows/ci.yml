@@ -90,6 +90,8 @@ jobs:
           PY
 
   windows-pymol-gui:
+    permissions:
+      contents: write
     # Best-effort GUI path on the Windows runner: PyMOL's Qt window with the plugin started via -r, driven through
     # the MCP server (render uses the GUI draw/png path).  Runners expose only a basic software OpenGL, so this
     # job documents whether the GUI bridge works there; it does not gate the headless job above.
@@ -119,6 +121,7 @@ jobs:
         env:
           QT_OPENGL: software
         run: |
+          mkdir -p ci-out; exec > >(tee -a ci-out/launch.txt) 2>&1
           python - <<'PY'
           import os, subprocess, time, glob, json, sys
           exe = os.environ["PYMOL_EXE"]; script = os.path.abspath("molmcp/inapp/pymol/molmcp_pymol_launch.py")
@@ -139,6 +142,7 @@ jobs:
       - name: status + run + scene through the MCP server (no rendering)
         shell: bash
         run: |
+          mkdir -p ci-out; exec > >(tee -a ci-out/status.txt) 2>&1
           .venv/Scripts/python.exe - <<'PY'
           import asyncio, os, sys, json
           sys.path.insert(0, "tests")
@@ -159,6 +163,7 @@ jobs:
       - name: render through the GUI draw path
         shell: bash
         run: |
+          mkdir -p ci-out; exec > >(tee -a ci-out/render.txt) 2>&1
           .venv/Scripts/python.exe - <<'PY'
           import asyncio, os, sys, json
           sys.path.insert(0, "tests")
@@ -176,6 +181,7 @@ jobs:
       - name: layout (ID pass) through the GUI
         shell: bash
         run: |
+          mkdir -p ci-out; exec > >(tee -a ci-out/layout.txt) 2>&1
           .venv/Scripts/python.exe - <<'PY'
           import asyncio, os, sys, json
           sys.path.insert(0, "tests")
@@ -194,6 +200,7 @@ jobs:
         if: always()
         shell: bash
         run: |
+          mkdir -p ci-out; exec > >(tee -a ci-out/quit.txt) 2>&1
           .venv/Scripts/python.exe - <<'PY' || true
           import asyncio, os, sys
           sys.path.insert(0, "tests")
@@ -206,6 +213,20 @@ jobs:
                       print("quit:", text_of(await s.call_tool("quit_pymol", {"confirm": True}))[:80].replace("\n", " "))
           asyncio.run(q())
           PY
+
+      - name: Publish the step outputs to the ci-logs branch (readable without admin rights)
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-out
+          cp pymol_gui.log ci-out/ 2>/dev/null || true
+          ls "$USERPROFILE/.molmcp/renders" > ci-out/renders.txt 2>/dev/null || true
+          git config user.name "ci-bot"; git config user.email "ci@users.noreply.github.com"
+          rm -rf /tmp/cilogs && mkdir -p /tmp/cilogs && cp -r ci-out /tmp/cilogs/ && cd /tmp/cilogs
+          git init -q && git checkout -q -b ci-logs && git add -A && git commit -q -m "windows-pymol-gui logs for $GITHUB_SHA ($GITHUB_RUN_ID)"
+          git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-logs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   linux-unit:
     runs-on: ubuntu-latest
