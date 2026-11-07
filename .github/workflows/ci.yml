@@ -86,10 +86,9 @@ jobs:
                       st = json.loads(text_of(await s.call_tool("status", {})))
                       print("status:", {k: st.get(k) for k in ("app", "connected", "executable", "hint")})
                       assert st.get("app") == "chimerax" and not st.get("connected")
-                      sk = json.loads(text_of(await s.call_tool("skills", {})))
-                      names = [x["name"] for x in sk.get("skills", [])] if isinstance(sk, dict) else []
-                      print("skills:", len(names), names[:6])
-                      assert "publication-rendering" in names, sk
+                      sk = text_of(await s.call_tool("skills", {}))
+                      print("skills index:", len(sk), "chars;", sk[:160].replace("\n", " "))
+                      assert "publication-rendering" in sk and "maps-and-cryoem" in sk, sk[:400]
                       body = text_of(await s.call_tool("skill", {"name": "publication-rendering"}))
                       assert "render" in body.lower() and len(body) > 500
                       pngs = sorted(glob.glob(os.path.join(os.path.expanduser("~"), ".molmcp", "renders", "*.png")))
