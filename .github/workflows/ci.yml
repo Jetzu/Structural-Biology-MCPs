@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-pymol:
+    # Real Windows: installer, unit tests and the MCP stdio client driving pymol-mcp, which launches a headless
+    # PyMOL (open-source wheel) on the runner and renders/analyses frames there.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install open-source PyMOL (wheel) into the runner's Python
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          curl -sSL -o pymol.whl https://github.com/cgohlke/pymol-open-source-wheels/releases/download/v2026.4.5/pymol-3.2.0a0-cp311-cp311-win_amd64.whl
+          python -m pip install numpy pillow
+          python -m pip install --no-deps pymol.whl
+          python -c "import pymol, pymol2, sys; print('pymol import ok on', sys.platform)"
+          echo "PYMOL_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+      - name: Bootstrap installer (venv, package, plugin, CLI registrations)
+        run: python install.py --pymol --claude --codex
+      - name: Show what the installer registered
+        shell: bash
+        run: |
+          ls .venv/Scripts | grep -iE "pymol-mcp|chimerax-mcp|python.exe" || true
+          python -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude.json'))); print({k:v['command'] for k,v in d['mcpServers'].items()})"
+          ls "$USERPROFILE/AppData/Roaming/pymol/startup" || true
+      - name: Unit tests (Windows Python)
+        run: .venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+      - name: MCP end-to-end (stdio client -> pymol-mcp -> headless PyMOL launched by the server)
+        env:
+          MOLMCP_PYMOL_LAUNCH_MODE: headless
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe -u tests/e2e_mcp_client.py pymol --launch 2>&1 | grep -vE '^\s+"(rgb|hex|px|frac|ascii)"|^\s+[0-9.,-]+$|^\s+\],?$|^\s+"[^"]*",?$' | tail -120
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Quit the headless PyMOL started by the server
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe - <<'PY'
+          import asyncio, os, sys
+          sys.path.insert(0, "tests")
+          from e2e_mcp_client import stdio_client, StdioServerParameters, ClientSession, text_of
+          async def q():
+              p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/pymol-mcp.exe"), args=[], env=dict(os.environ))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      print("status:", text_of(await s.call_tool("status", {}))[:200].replace("\n", " "))
+                      print("quit:", text_of(await s.call_tool("quit_pymol", {"confirm": True}))[:80].replace("\n", " "))
+          asyncio.run(q())
+          PY
+
+  linux-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e .
+      - run: python -m unittest discover -s tests -p "test_*.py" -v
