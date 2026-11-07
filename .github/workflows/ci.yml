@@ -68,6 +68,76 @@ jobs:
           asyncio.run(q())
           PY
 
+      - name: Build the ChimeraX bundle wheel on Windows (no ChimeraX needed for the build) and list it
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe - <<'PY'
+          import os, sys, zipfile
+          sys.path.insert(0, ".")
+          from molmcp.install import build_chimerax_wheel
+          d = os.path.abspath("dist-ci"); os.makedirs(d, exist_ok=True)
+          whl = build_chimerax_wheel(d)
+          names = zipfile.ZipFile(whl).namelist()
+          print(whl, len(names), "files")
+          need = ["chimerax/agentbridge/__init__.py", "chimerax/agentbridge/ops.py", "chimerax/agentbridge/bridgecore.py",
+                  "chimerax/agentbridge/agentcli.py", "chimerax/agentbridge/agentchat_ui.py"]
+          missing = [n for n in need if not any(x.endswith(n) for x in names)]
+          meta = [x for x in names if x.endswith("METADATA")][0]
+          text = zipfile.ZipFile(whl).read(meta).decode()
+          print([ln for ln in text.splitlines() if "ChimeraX ::" in ln][:6])
+          assert not missing, missing
+          assert "ChimeraX :: Bundle" in text and "ChimeraX :: Tool" in text
+          PY
+
+  windows-pymol-gui:
+    # Best-effort GUI path on the Windows runner: PyMOL's Qt window with the plugin started via -r, driven through
+    # the MCP server (render uses the GUI draw/png path).  Runners expose only a basic software OpenGL, so this
+    # job documents whether the GUI bridge works there; it does not gate the headless job above.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyMOL wheel + PyQt5 + molmcp
+        shell: bash
+        run: |
+          WHL=pymol-3.2.0a0-cp311-cp311-win_amd64.whl
+          curl -fsSL -o "$WHL" "https://github.com/cgohlke/pymol-open-source-wheels/releases/download/v2026.4.5/$WHL"
+          python -m pip install --upgrade pip
+          python -m pip install numpy pillow pyqt5
+          python -m pip install --no-deps "$WHL"
+          ls "$(python -c 'import sys,os; print(os.path.dirname(sys.executable))')/Scripts" | grep -i pymol || true
+          echo "PYMOL_EXE=$(python -c 'import sys,os; print(os.path.join(os.path.dirname(sys.executable), "Scripts", "pymol.exe"))')" >> "$GITHUB_ENV"
+          echo "PYMOL_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+      - name: Installer (plugin into %APPDATA%\pymol\startup via PyMOL's prefs)
+        run: python install.py --pymol --claude
+      - name: MCP end-to-end against the PyMOL GUI launched by the server (-r launch script)
+        env:
+          MOLMCP_PYMOL_LAUNCH_MODE: gui
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe -u tests/e2e_mcp_client.py pymol --launch 2>&1 | grep -vE '^\s+"(rgb|hex|px|frac|ascii)"|^\s+[0-9.,-]+$|^\s+\],?$|^\s+"[^"]*",?$' | tail -120
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Quit the PyMOL window
+        if: always()
+        shell: bash
+        run: |
+          .venv/Scripts/python.exe - <<'PY' || true
+          import asyncio, os, sys
+          sys.path.insert(0, "tests")
+          from e2e_mcp_client import stdio_client, StdioServerParameters, ClientSession, text_of
+          async def q():
+              p = StdioServerParameters(command=os.path.abspath(".venv/Scripts/pymol-mcp.exe"), args=[], env=dict(os.environ))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      print("quit:", text_of(await s.call_tool("quit_pymol", {"confirm": True}))[:80].replace("\n", " "))
+          asyncio.run(q())
+          PY
+
   linux-unit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
