@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Bootstrap installer for molmcp (PyMOL + ChimeraX MCP servers).
 
-    python install.py            # create .venv, install molmcp, set up PyMOL/ChimeraX, register with Claude Code & Codex
+    python install.py            # create .venv, install molmcp, then set up whatever is installed:
+                                 # PyMOL and/or ChimeraX, for Claude Code, Codex and/or Claude Desktop
     python install.py --check    # only report what is found
-    python install.py --help     # all options
+    python install.py --help     # optional overrides: --pymol --chimerax --claude --codex --claude-desktop,
+                                 # --no-<name> to skip one, --uninstall, --dry-run
 
 Works on macOS, Linux and Windows with Python 3.10+ (uses `uv` when available).
 """

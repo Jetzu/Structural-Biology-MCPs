@@ -53,11 +53,22 @@ Step-by-step instructions for macOS, Linux and Windows, including Claude-only an
 
 ```bash
 git clone git@github.com:Jetzu/Structural-Biology-MCPs.git mol-mcp && cd mol-mcp   # or https://github.com/Jetzu/Structural-Biology-MCPs.git
-python install.py            # creates .venv, installs molmcp, installs the PyMOL plugin and ChimeraX bundle,
-                             # registers both servers with Claude Code, Codex CLI and Claude Desktop (if present)
+python install.py            # creates .venv and installs molmcp, then sets up whatever it finds:
+                             # PyMOL and/or ChimeraX, registered with Claude Code, Codex and/or Claude Desktop
 python install.py --check    # only report what was found
-python install.py --help     # individual steps: --pymol --chimerax --claude --codex --claude-desktop, --uninstall, --dry-run
 ```
+
+No flags are needed: a viewer or AI client that is not installed is skipped (re-run after installing it).
+Optional overrides, which combine freely:
+
+| you want | command |
+|---|---|
+| only PyMOL / only ChimeraX | `python install.py --pymol` / `python install.py --chimerax` |
+| only Claude Code / only Codex / only Claude Desktop | `python install.py --claude` / `--codex` / `--claude-desktop` |
+| e.g. PyMOL for Codex only | `python install.py --pymol --codex` |
+| skip something that is installed | `--no-pymol`, `--no-chimerax`, `--no-claude`, `--no-codex`, `--no-claude-desktop` |
+| remove (all, or what the flags name) | `python install.py --uninstall [flags]` |
+| preview | `python install.py --dry-run [flags]` |
 
 The installer finds PyMOL/ChimeraX on `PATH` or in the usual install locations (`/Applications/*.app`,
 `/opt/UCSF/ChimeraX*`, `C:\Program Files\...`, conda envs).  Override with `PYMOL_EXE` / `CHIMERAX_EXE`.

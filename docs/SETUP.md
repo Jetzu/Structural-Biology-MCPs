@@ -162,16 +162,15 @@ codex login status        # "Logged in using ChatGPT"
 | | Claude-only | Codex-only |
 |---|---|---|
 | install + login | Claude Code (above) | Codex (above) |
-| run the installer | `python install.py --pymol --chimerax --claude` | `python install.py --pymol --chimerax --codex` |
+| run the installer | `python install.py` (detects Claude Code) | `python install.py` (detects Codex) |
 | verify registration | `claude mcp list` | `codex mcp list` |
 | use from a terminal | `claude` then ask | `codex` then ask |
 | use inside the viewer | `claude <text>`, the *Agent Chat* panel | `codex <text>`, the *Agent Chat* panel |
 
-Drop `--pymol` or `--chimerax` if you only have one viewer. Running plain `python install.py` with no flags
-also works for a one-agent setup: the step for the agent you do not have only writes a config file that
-nothing reads (`~/.codex/config.toml` and `~/.claude.json` are created if missing; an existing
-`~/.claude.json` that does not parse as JSON is left untouched). The *Agent Chat* panel inside the viewers
-detects which CLIs are installed and uses the one it finds; the missing one is shown greyed out as
+No flags are needed for a one-agent or one-viewer setup: the installer registers the servers only with the
+AI clients it finds and only for the viewers it finds, and says what it skipped. If you have both agents but
+want only one, add `--claude` or `--codex` (or `--no-codex` / `--no-claude`). The *Agent Chat* panel inside the
+viewers detects which CLIs are installed and uses the one it finds; the missing one is shown greyed out as
 "(not installed)".
 
 ---
@@ -207,30 +206,46 @@ What `install.py` (the bootstrap script at the repository root) does, in order:
    `chimerax-mcp` and `molmcp-install`;
 3. runs `.venv/bin/python -m molmcp.install` with every flag you passed.
 
-`molmcp.install` always prints a summary first (the same as `--check`) and then runs the steps.
+`molmcp.install` always prints what it detected first (the same as `--check`), then a plan (which viewers,
+which AI clients, what it skips and why), then runs the steps.
+
+Detection:
+
+| | detected when |
+|---|---|
+| PyMOL | `PYMOL_EXE`, `pymol` on `PATH`, or a standard install location (`/Applications/PyMOL.app`, `C:\Program Files\PyMOL`, conda envs); headless-only setups via `PYMOL_PYTHON` |
+| ChimeraX | `CHIMERAX_EXE`, `ChimeraX` on `PATH`, or a standard install location |
+| Claude Code | a working `claude` CLI (PATH, `~/.claude/local`, the VS Code/Cursor extension binary) or an existing `~/.claude.json` / `~/.claude` |
+| Codex | a working `codex` CLI (PATH, npm global, the CLI bundled with the ChatGPT app) or an existing `~/.codex` |
+| Claude Desktop | its `claude_desktop_config.json` exists, or the app is installed (the config file is then created) |
 
 ### 3.3 Every flag
 
 ```
 python install.py [--pymol] [--chimerax] [--claude] [--codex] [--claude-desktop]
+                  [--no-pymol] [--no-chimerax] [--no-claude] [--no-codex] [--no-claude-desktop]
                   [--uninstall] [--dry-run] [--check] [--help]
 ```
 
+The flags are optional overrides on two independent axes, viewers and AI clients. On each axis, naming
+something limits the run to it; naming nothing means "everything detected".
+
 | flag | meaning |
 |---|---|
-| *(no flags)* | do everything that applies: PyMOL plugin, ChimeraX bundle, Claude Code, Codex and (only if its config file already exists) Claude Desktop |
-| `--pymol` | install the PyMOL plugin (auto-starts the bridge in PyMOL) |
-| `--chimerax` | build + install the ChimeraX bundle (auto-starts the bridge in ChimeraX) |
-| `--claude` | register the `pymol` and `chimerax` servers with Claude Code (user scope, `~/.claude.json`) |
-| `--codex` | register them with Codex (`~/.codex/config.toml`) |
-| `--claude-desktop` | register them with Claude Desktop (only if `claude_desktop_config.json` exists) |
-| `--uninstall` | remove instead of install; combine with the flags above to remove only some pieces, alone removes everything |
-| `--dry-run` | print what would be done, change nothing |
-| `--check` | only print what was found (Python, PyMOL, ChimeraX, server commands, state directory) and exit |
+| *(no flags)* | every detected viewer (PyMOL plugin, ChimeraX bundle), registered with every detected AI client |
+| `--pymol` / `--chimerax` | only this viewer (its bridge, and only its server in the client configs) |
+| `--claude` | only Claude Code (user scope, `~/.claude.json`); written even if Claude Code was not detected |
+| `--codex` | only Codex (`~/.codex/config.toml`); written even if Codex was not detected |
+| `--claude-desktop` | only Claude Desktop (`claude_desktop_config.json`, created if missing) |
+| `--no-<name>` | skip that viewer or client although it is installed (`--no-pymol`, `--no-chimerax`, `--no-claude`, `--no-codex`, `--no-claude-desktop`) |
+| `--uninstall` | remove instead of install (see §12) |
+| `--dry-run` | print the plan and every step, change nothing |
+| `--check` | only print what was detected (Python, viewers, AI clients, server commands, state directory) and exit |
 | `--help`, `-h` | show the bootstrap help and, if the venv exists, the full `molmcp.install` help |
 
-Selecting one or more step flags runs *only* those steps. All steps are idempotent: re-running the
-installer (for example after `git pull`) is the normal way to update.
+Examples: `--pymol --codex` sets up PyMOL for Codex only; `--no-claude-desktop` does everything except Claude
+Desktop. All steps are idempotent: re-running the installer (for example after `git pull` or after
+installing ChimeraX or Codex) is the normal way to update.
 
 Inside the venv the same program is available as `.venv/bin/molmcp-install` (Windows:
 `.venv\Scripts\molmcp-install.exe`) or `.venv/bin/python -m molmcp.install`.
@@ -878,7 +893,7 @@ settings. The chat strips `PYTHONHOME`, `PYTHONPATH`, `PYTHONEXECUTABLE`, `DYLD_
 from. Also check that `<repo>/.venv/bin/pymol-mcp` still exists.
 
 **`claude mcp list` shows `✘ Failed to connect` / Codex says the server failed.** The command path in the
-config no longer exists (repository moved or `.venv` deleted) → re-run `python install.py --claude --codex`
+config no longer exists (repository moved or `.venv` deleted) → re-run `python install.py`
 from the new location (it rewrites the paths). Test the server by hand:
 `/path/to/mol-mcp/.venv/bin/pymol-mcp` should start silently and wait for input (Ctrl-C to stop); a
 traceback means the venv is broken → delete `.venv` and re-run `python install.py`. The end-to-end test
@@ -930,12 +945,15 @@ on a physical Windows machine — please report what you see.
 ## 12. Uninstalling
 
 ```bash
-python3 install.py --uninstall                      # everything
-python3 install.py --uninstall --pymol              # only the PyMOL plugin (+ pymolrc block)
-python3 install.py --uninstall --chimerax           # only the ChimeraX bundle
-python3 install.py --uninstall --claude --codex     # only the registrations
+python3 install.py --uninstall                      # everything: plugin, bundle and every registration
+python3 install.py --uninstall --pymol              # PyMOL plugin (+ pymolrc block) and the pymol server everywhere
+python3 install.py --uninstall --chimerax           # ChimeraX bundle and the chimerax server everywhere
+python3 install.py --uninstall --codex              # only the Codex registration (plugins stay for other clients)
+python3 install.py --uninstall --claude --codex     # only those registrations
 python3 install.py --uninstall --dry-run            # show what would be removed
 ```
+
+Removal does not depend on detection: our entries are removed from every config file that has them.
 
 What is removed:
 
