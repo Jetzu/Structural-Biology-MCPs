@@ -1,0 +1,129 @@
+{
+ "prompt": "Superpose closed (1AKE) and open (4AKE) adenylate kinase, colour them differently and give me the RMSD.",
+ "commands": [
+  "fetch 1ake, async=0",
+  "fetch 4ake, async=0",
+  "remove not chain A",
+  "remove solvent or organic",
+  "hide everything",
+  "show cartoon",
+  "color marine, 1ake",
+  "color salmon, 4ake",
+  "bg_color white",
+  "set antialias, 2",
+  "set depth_cue, 0",
+  "set cartoon_transparency, 0.15, 4ake"
+ ],
+ "failed": [],
+ "tool": {
+  "name": "align",
+  "args": {
+   "mobile": "4ake",
+   "target": "1ake",
+   "method": "super"
+  },
+  "result": {
+   "method": "super",
+   "rmsd_after_refinement": 2.069,
+   "atoms_after_refinement": 1135,
+   "refinement_cycles": 5,
+   "rmsd_before_refinement": 7.191,
+   "atoms_before_refinement": 1656,
+   "alignment_score": 899.2,
+   "residues_aligned": 214,
+   "ok": true,
+   "changes": [
+    {
+     "change": "selections_added",
+     "names": [
+      "_align1",
+      "_align2"
+     ]
+    }
+   ]
+  }
+ },
+ "render": {
+  "summary": "Content covers 15% of the 1600x1200 frame (bounding box 65% x 69%). Centroid is centred. Free margins: left 11%, right 24%, top 11%, bottom 20%. Dominant colours: royalblue 22%, salmon 18%, grey 14%, marine 13%. Background white; foreground/background contrast 5.3:1.",
+  "coverage": 0.1467,
+  "bbox": {
+   "px": [
+    182,
+    134,
+    1215,
+    960
+   ],
+   "frac": [
+    0.114,
+    0.112,
+    0.759,
+    0.8
+   ],
+   "width_frac": 0.646,
+   "height_frac": 0.688
+  },
+  "margins_frac": {
+   "left": 0.114,
+   "right": 0.241,
+   "top": 0.112,
+   "bottom": 0.2
+  },
+  "clipped_edges": [],
+  "palette": [
+   {
+    "name": "royalblue",
+    "share": 0.222
+   },
+   {
+    "name": "salmon",
+    "share": 0.179
+   },
+   {
+    "name": "grey",
+    "share": 0.139
+   },
+   {
+    "name": "marine",
+    "share": 0.134
+   },
+   {
+    "name": "darkgrey",
+    "share": 0.096
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 1.0
+  },
+  "ascii": [
+   "                                                ",
+   "                                                ",
+   "                       -.=:                     ",
+   "                       +*@+%*                   ",
+   "                    +=--=%*#*#-                 ",
+   "                   #@%*-++***#*:                ",
+   "                   :%@%*%#:##@%+                ",
+   "         ..   .:.+*+=#+@@# :%%@@+=:-            ",
+   "       .. =-:.:.-%%@@@@@@%@@#%@#%##*            ",
+   "     .:  ..+*=*.-- --:=:-%*#+%+. --.            ",
+   "      .:-. .*#==%@%#+-:--#@*%@#@==              ",
+   "       ::.. +==***=%*#%#.-+#%@##%@+.            ",
+   "       ..  :-:-=:   .*@@@@##%@@%****:           ",
+   "            ... ..  .--#@%@%*++=:               ",
+   "                   .@+##:%%.*:                  ",
+   "                    =####%@%#.                  ",
+   "                                                ",
+   "                                                ",
+   "                                                ",
+   "                                                "
+  ]
+ },
+ "viewer": "pymol 3.1.0 (headless)"
+}

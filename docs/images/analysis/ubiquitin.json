@@ -1,0 +1,117 @@
+{
+ "prompt": "Make a publication figure of ubiquitin (1UBQ): cartoon coloured by secondary structure, Lys48 and Lys63 as labelled sticks, white background.",
+ "commands": [
+  "fetch 1ubq, async=0",
+  "remove solvent",
+  "hide everything",
+  "show cartoon",
+  "dss",
+  "set cartoon_fancy_helices, 1",
+  "set cartoon_transparency, 0",
+  "color grey80",
+  "color skyblue, ss H",
+  "color salmon, ss S",
+  "show sticks, resi 48+63 and not name N+C+O",
+  "color yelloworange, resi 48+63 and elem C",
+  "color blue, resi 48+63 and elem N",
+  "set stick_radius, 0.3",
+  "label resi 48+63 and name NZ, 'K' + resi",
+  "set label_size, 28",
+  "set label_color, black",
+  "set label_position, (1.5, 1.5, 2)",
+  "set float_labels, 1",
+  "bg_color white",
+  "set antialias, 2",
+  "set ray_shadow, 0",
+  "set depth_cue, 0",
+  "set specular, 0.2",
+  "orient",
+  "turn x, -30",
+  "turn y, 20",
+  "zoom all, 2"
+ ],
+ "failed": [],
+ "render": {
+  "summary": "Content covers 8% of the 1600x1200 frame (bounding box 68% x 60%). Centroid is centred. Free margins: left 21%, right 12%, top 18%, bottom 22%. Dominant colours: salmon 34%, steelblue 22%, darkgrey 11%, grey 7%. Background white; foreground/background contrast 4.1:1.",
+  "coverage": 0.0759,
+  "bbox": {
+   "px": [
+    330,
+    216,
+    1412,
+    939
+   ],
+   "frac": [
+    0.206,
+    0.18,
+    0.882,
+    0.782
+   ],
+   "width_frac": 0.676,
+   "height_frac": 0.603
+  },
+  "margins_frac": {
+   "left": 0.206,
+   "right": 0.118,
+   "top": 0.18,
+   "bottom": 0.218
+  },
+  "clipped_edges": [],
+  "palette": [
+   {
+    "name": "salmon",
+    "share": 0.335
+   },
+   {
+    "name": "steelblue",
+    "share": 0.218
+   },
+   {
+    "name": "darkgrey",
+    "share": 0.109
+   },
+   {
+    "name": "grey",
+    "share": 0.069
+   },
+   {
+    "name": "sienna",
+    "share": 0.043
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 1.0
+  },
+  "ascii": [
+   "                                                ",
+   "                                                ",
+   "                                                ",
+   "                           .:.                  ",
+   "                         -#%+.-.                ",
+   "           ::.:        -#*-   .-                ",
+   "          :....::: .:-#%*#%=::.                 ",
+   "          ----=.:++##==*@#*-.                   ",
+   "             =%#=-%+   =+**#%%#=                ",
+   "              .:=@=    ##**#-:--::              ",
+   "               :+.    *#@@*=%%:.  :::    -.     ",
+   "              -:=+-. =%@@+--.= .-   .::::       ",
+   "              -+*.==:#-+=-  :=+*:               ",
+   "              .:-**-:*%%.-    ..                ",
+   "                   .::  -.                      ",
+   "                     .::                        ",
+   "                                                ",
+   "                                                ",
+   "                                                ",
+   "                                                "
+  ]
+ },
+ "viewer": "pymol 3.1.0 (headless)"
+}

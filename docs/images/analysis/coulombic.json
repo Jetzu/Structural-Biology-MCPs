@@ -1,0 +1,104 @@
+{
+ "prompt": "Colour barnase by Coulombic potential and show its inhibitor barstar as a cartoon next to it (1BRS).",
+ "commands": [
+  "open 1brs",
+  "delete #1 & ~/A,D",
+  "delete solvent",
+  "set bgColor white",
+  "lighting soft",
+  "hide atoms",
+  "surface /A",
+  "coulombic /A",
+  "hide /A cartoon",
+  "cartoon /D",
+  "color /D gold target c",
+  "view",
+  "turn x -60",
+  "view",
+  "zoom 0.9"
+ ],
+ "failed": [],
+ "render": {
+  "summary": "Content covers 16% of the 1600x1200 frame (bounding box 51% x 74%). Centroid is shifted up by 4%. Free margins: left 25%, right 24%, top 14%, bottom 12%. Dominant colours: lightpink 18%, salmon 13%, pink 7%, tomato 6%. Background white; foreground/background contrast 2.5:1.",
+  "coverage": 0.1572,
+  "bbox": {
+   "px": [
+    398,
+    172,
+    1216,
+    1057
+   ],
+   "frac": [
+    0.249,
+    0.143,
+    0.76,
+    0.881
+   ],
+   "width_frac": 0.511,
+   "height_frac": 0.738
+  },
+  "margins_frac": {
+   "left": 0.249,
+   "right": 0.24,
+   "top": 0.143,
+   "bottom": 0.119
+  },
+  "clipped_edges": [],
+  "palette": [
+   {
+    "name": "lightpink",
+    "share": 0.175
+   },
+   {
+    "name": "salmon",
+    "share": 0.132
+   },
+   {
+    "name": "pink",
+    "share": 0.069
+   },
+   {
+    "name": "tomato",
+    "share": 0.056
+   },
+   {
+    "name": "lightblue",
+    "share": 0.047
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 1.0
+  },
+  "ascii": [
+   "                                                ",
+   "                                                ",
+   "                                                ",
+   "                  .  :  -*%*+:                  ",
+   "                .=@%*%--##+@@@-                 ",
+   "            .#%+#=*@@@%@@@@-*@#==.              ",
+   "            *@@@@=%#=#@@@@@- ::-%-              ",
+   "            -@@@%-*+%@@%-#%*-*++=               ",
+   "            --%@@@#*@@@@:*#*#+:==               ",
+   "            : :@@@@:%@@%=@=-=-==::::.           ",
+   "            -* =*%@@@@@@#@#.+-::%-*#:           ",
+   "            =%*#=#%@@@@@@%+:-:-:-##+            ",
+   "             -@@%*%-*+#-#%-:-=:-..%-            ",
+   "             :=-=--+%@%@%. :-+::  =:            ",
+   "                   ..:.:   -=:-   =#            ",
+   "                          .-+. .-:#=            ",
+   "                            :=+-+ :             ",
+   "                              :                 ",
+   "                                                ",
+   "                                                "
+  ]
+ },
+ "viewer": "chimerax 1.11.1 (gui)"
+}

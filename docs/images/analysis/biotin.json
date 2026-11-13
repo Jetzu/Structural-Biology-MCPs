@@ -1,0 +1,107 @@
+{
+ "prompt": "Zoom into the biotin pocket of streptavidin (1STP): biotin as ball-and-stick, the pocket residues as sticks, hydrogen bonds as dashed lines.",
+ "commands": [
+  "open 1stp",
+  "set bgColor white",
+  "lighting soft",
+  "graphics silhouettes true",
+  "hide atoms",
+  "cartoon",
+  "color #1 lightsteelblue target c",
+  "transparency #1 60 target c",
+  "show :BTN :<4.5 & ~solvent atoms",
+  "style stick",
+  "color byhetero",
+  "color :BTN & C gold",
+  "style :BTN ball",
+  "hbonds :BTN reveal true color black radius 0.06 dashes 8",
+  "view :BTN :<4.5",
+  "zoom 0.85"
+ ],
+ "failed": [],
+ "render": {
+  "summary": "Content covers 25% of the 1600x1200 frame (bounding box 99% x 97%). Centroid is shifted right by 8% and up by 4%. Content is cut off at the right edge (right 12%). Dominant colours: lavender 76%, black 6%, tan 4%, lightgrey 2%. Background white; foreground/background contrast 1.5:1. Warning: low contrast, the content may be hard to distinguish from the background.",
+  "coverage": 0.2495,
+  "bbox": {
+   "px": [
+    11,
+    8,
+    1600,
+    1169
+   ],
+   "frac": [
+    0.007,
+    0.007,
+    1.0,
+    0.974
+   ],
+   "width_frac": 0.993,
+   "height_frac": 0.968
+  },
+  "margins_frac": {
+   "left": 0.007,
+   "right": 0.0,
+   "top": 0.007,
+   "bottom": 0.026
+  },
+  "clipped_edges": [
+   "right"
+  ],
+  "palette": [
+   {
+    "name": "lavender",
+    "share": 0.765
+   },
+   {
+    "name": "black",
+    "share": 0.055
+   },
+   {
+    "name": "tan",
+    "share": 0.036
+   },
+   {
+    "name": "lightgrey",
+    "share": 0.022
+   },
+   {
+    "name": "silver",
+    "share": 0.017
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 0.973
+  },
+  "ascii": [
+   "                                   =.     -=    ",
+   "                                 :+#:    *.     ",
+   "   :..                       *#*  +@*    +      ",
+   " =*-- :     .            .. +@@@*  -@: --*.     ",
+   "-*   . .:.::::    :==-.=%@*..#==%  +@* -@@%:    ",
+   "-=:+=        *:: .@@@*=+#@@=    :==@%:.%@%-***=.",
+   " .%@#:      #@@#  =%@%=+-@@%.    +@#. #@@-+:.-*%",
+   " :%    .-=.  .%@*::-@@@-*#@@: .=#@+  *@%:=#*=  :",
+   "  ==---:  *=. :@@#+-*@@**@+#=-#-@# .#@#.== :+: :",
+   "    .:    #@%. -@@%:-#@@@#.  %*-.. #@+  -@*%@*#=",
+   "          .#@#  :%@@*.%@@@@%%%.   *@=  =*=#*=-. ",
+   "           .*@#: -@@@##%%%*%@@@*=--: :#@%+.     ",
+   "             -%@+::=+%@@#@+=+=-+@#.-#@%=        ",
+   "               :+%@%*++*#%##%%*+#%@@%-          ",
+   "                  .:=+**#%%###*#++*##++--=:     ",
+   "                         -  +:=-    . :=:=:     ",
+   "                            :=:         ++      ",
+   "                                        :=      ",
+   "                                         -=.    ",
+   "                                           -==: "
+  ]
+ },
+ "viewer": "chimerax 1.11.1 (gui)"
+}

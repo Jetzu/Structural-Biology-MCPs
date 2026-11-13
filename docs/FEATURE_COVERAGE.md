@@ -470,4 +470,4 @@ Not verified (no GUI was launched, no network, no model calls): behaviour of the
 toolbar buttons and the new window naming / focus-based `connect` selection at runtime; `claude -p` access to the `Skill` tool and MCP prompts; Codex handling of MCP prompts,
 resources and image content; movie encoding (`movie.produce`, `movie encode`); `fetch`/`open <id>` network loads;
 co-existence of molmcp with ChimeraX's built-in `mcp` REST server and with the third-party `pymol-mcp-socket-plugin`
-found in PyMOL's startup directory; Windows and Linux behaviour (see the README matrix).
+found in PyMOL's startup directory; Windows and Linux behaviour (see the verification matrix in docs/detailed.md).

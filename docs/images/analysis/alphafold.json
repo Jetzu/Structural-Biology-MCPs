@@ -1,0 +1,96 @@
+{
+ "prompt": "Fetch the AlphaFold model of human p53 and colour it by pLDDT confidence.",
+ "commands": [
+  "alphafold fetch P04637",
+  "set bgColor white",
+  "lighting soft",
+  "graphics silhouettes true",
+  "color bfactor palette alphafold",
+  "view",
+  "zoom 0.85"
+ ],
+ "failed": [],
+ "render": {
+  "summary": "Content covers 4% of the 1600x1200 frame (bounding box 46% x 72%). Centroid is shifted left by 7%. Free margins: left 26%, right 27%, top 17%, bottom 12%. Dominant colours: black 27%, blue 16%, tv_blue 9%, goldenrod 6%. Background white; foreground/background contrast 7.6:1. Content is small in the frame; consider zooming in.",
+  "coverage": 0.039,
+  "bbox": {
+   "px": [
+    420,
+    203,
+    1164,
+    1061
+   ],
+   "frac": [
+    0.263,
+    0.169,
+    0.728,
+    0.884
+   ],
+   "width_frac": 0.465,
+   "height_frac": 0.715
+  },
+  "margins_frac": {
+   "left": 0.263,
+   "right": 0.272,
+   "top": 0.169,
+   "bottom": 0.116
+  },
+  "clipped_edges": [],
+  "palette": [
+   {
+    "name": "black",
+    "share": 0.271
+   },
+   {
+    "name": "blue",
+    "share": 0.161
+   },
+   {
+    "name": "tv_blue",
+    "share": 0.091
+   },
+   {
+    "name": "goldenrod",
+    "share": 0.062
+   },
+   {
+    "name": "gold",
+    "share": 0.024
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 1.0
+  },
+  "ascii": [
+   "                                                ",
+   "                                                ",
+   "                                                ",
+   "                   ....                         ",
+   "                  :   .:                        ",
+   "                  :  =:                         ",
+   "                  .-:. :.:.   .                 ",
+   "                  .*+:*.   :.:-.:               ",
+   "              . -:-**%*       ::.               ",
+   "              *+%#*##%-                         ",
+   "              ***###++:                         ",
+   "              .- =#-+=*  =--.   ...             ",
+   "                 -.:: . -=  .... .              ",
+   "             .    ..=+:..                       ",
+   "            :+:.::   .=                         ",
+   "              ...     =                         ",
+   "                ...   :                         ",
+   "                  ...:.                         ",
+   "                                                ",
+   "                                                "
+  ]
+ },
+ "viewer": "chimerax 1.11.1 (gui)"
+}

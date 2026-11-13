@@ -1,0 +1,302 @@
+{
+ "prompt": "Show haemoglobin (4HHB) with each chain in its own colour and the hemes as sticks, then tell me how much of each chain is visible and which chains hide each other.",
+ "commands": [
+  "fetch 4hhb, async=0",
+  "remove solvent",
+  "hide everything",
+  "show cartoon",
+  "color skyblue, chain A",
+  "color salmon, chain B",
+  "color palegreen, chain C",
+  "color wheat, chain D",
+  "show sticks, resn HEM",
+  "color grey40, resn HEM and elem C",
+  "set stick_radius, 0.2",
+  "bg_color white",
+  "set antialias, 2",
+  "set depth_cue, 0",
+  "orient",
+  "zoom all, 1"
+ ],
+ "failed": [],
+ "render": {
+  "summary": "Content covers 27% of the 1200x900 frame (bounding box 67% x 80%). Centroid is centred. Free margins: left 17%, right 16%, top 10%, bottom 10%. Dominant colours: darkgrey 23%, steelblue 15%, seagreen 12%, grey 6%. Background white; foreground/background contrast 4.7:1.",
+  "coverage": 0.2677,
+  "bbox": {
+   "px": [
+    201,
+    86,
+    1004,
+    809
+   ],
+   "frac": [
+    0.168,
+    0.096,
+    0.837,
+    0.899
+   ],
+   "width_frac": 0.669,
+   "height_frac": 0.803
+  },
+  "margins_frac": {
+   "left": 0.168,
+   "right": 0.163,
+   "top": 0.096,
+   "bottom": 0.101
+  },
+  "clipped_edges": [],
+  "palette": [
+   {
+    "name": "darkgrey",
+    "share": 0.227
+   },
+   {
+    "name": "steelblue",
+    "share": 0.151
+   },
+   {
+    "name": "seagreen",
+    "share": 0.12
+   },
+   {
+    "name": "grey",
+    "share": 0.063
+   },
+   {
+    "name": "salmon",
+    "share": 0.056
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 1.0
+  },
+  "ascii": [
+   "                                                ",
+   "                               .                ",
+   "               ...       .:...*%*.              ",
+   "           .:::..-   ..  :-= :#*%%              ",
+   "          *%*+- .++*:*+#+**=: *%#:+= .          ",
+   "         .#-%@*..*#-%%%%#%%-:.#@@%#*:-.         ",
+   "          -#%@##=+#+#*#==#***@@%%*=.:#.         ",
+   "         .##@#@@#*##@@%@%@#@%%*@@@%+@@+         ",
+   "          *#@%%@@@#@%% :=**@@@@@%@@@@#:         ",
+   "         -@#@%@%#@%@=      =*%@@+#@@@*-:        ",
+   "        :-#@@@*+@@%#+      -@%@%%@%%##=         ",
+   "         :#@@@@@@@@@%##+- #%@%@%%#%@#+:         ",
+   "         #@@*#@@@%%#@#@%@%@%%###@@*@##.         ",
+   "         .%: =#%%@@*+##==#**+#+=##%%#-          ",
+   "          =:*#%@%#.-=%%#%%%#-#+ .#@%-#          ",
+   "            =+-#%# :=+*+#+*:#*=  -**%*          ",
+   "             .%%*#: --:  ..   -...-=:           ",
+   "               +#= ..:.       ....              ",
+   "                                                ",
+   "                                                "
+  ]
+ },
+ "viewer": "pymol 3.1.0 (headless)",
+ "layout": {
+  "items": [
+   {
+    "label": "4hhb/A",
+    "visible": true,
+    "pixels": 82997,
+    "share_of_frame": 0.0768,
+    "share_of_content": 0.2971,
+    "bbox": {
+     "px": [
+      469,
+      86,
+      1003,
+      547
+     ],
+     "frac": [
+      0.391,
+      0.096,
+      0.836,
+      0.608
+     ],
+     "width_frac": 0.445,
+     "height_frac": 0.512
+    },
+    "centroid_frac": [
+     0.64,
+     0.359
+    ],
+    "touches_edges": []
+   },
+   {
+    "label": "4hhb/B",
+    "visible": true,
+    "pixels": 56285,
+    "share_of_frame": 0.0521,
+    "share_of_content": 0.2015,
+    "bbox": {
+     "px": [
+      573,
+      291,
+      969,
+      785
+     ],
+     "frac": [
+      0.477,
+      0.323,
+      0.807,
+      0.872
+     ],
+     "width_frac": 0.33,
+     "height_frac": 0.549
+    },
+    "centroid_frac": [
+     0.666,
+     0.632
+    ],
+    "touches_edges": []
+   },
+   {
+    "label": "4hhb/C",
+    "visible": true,
+    "pixels": 83700,
+    "share_of_frame": 0.0775,
+    "share_of_content": 0.2996,
+    "bbox": {
+     "px": [
+      202,
+      352,
+      728,
+      808
+     ],
+     "frac": [
+      0.168,
+      0.391,
+      0.607,
+      0.898
+     ],
+     "width_frac": 0.438,
+     "height_frac": 0.507
+    },
+    "centroid_frac": [
+     0.359,
+     0.637
+    ],
+    "touches_edges": []
+   },
+   {
+    "label": "4hhb/D",
+    "visible": true,
+    "pixels": 56410,
+    "share_of_frame": 0.0522,
+    "share_of_content": 0.2019,
+    "bbox": {
+     "px": [
+      233,
+      117,
+      626,
+      609
+     ],
+     "frac": [
+      0.194,
+      0.13,
+      0.522,
+      0.677
+     ],
+     "width_frac": 0.328,
+     "height_frac": 0.547
+    },
+    "centroid_frac": [
+     0.334,
+     0.369
+    ],
+    "touches_edges": []
+   }
+  ],
+  "contacts_2d": [
+   {
+    "a": "4hhb/C",
+    "b": "4hhb/D",
+    "boundary_px": 1801
+   },
+   {
+    "a": "4hhb/A",
+    "b": "4hhb/B",
+    "boundary_px": 1691
+   },
+   {
+    "a": "4hhb/B",
+    "b": "4hhb/C",
+    "boundary_px": 745
+   },
+   {
+    "a": "4hhb/A",
+    "b": "4hhb/D",
+    "boundary_px": 693
+   }
+  ],
+  "summary": "4 of 4 items visible. Largest on screen: 4hhb/C (30% of content), 4hhb/A (30% of content), 4hhb/D (20% of content), 4hhb/B (20% of content).",
+  "occlusion": [
+   {
+    "label": "4hhb/D",
+    "solo_pixels": 76261,
+    "visible_pixels": 56410,
+    "visible_fraction": 0.74,
+    "occluded_fraction": 0.26
+   },
+   {
+    "label": "4hhb/B",
+    "solo_pixels": 75600,
+    "visible_pixels": 56285,
+    "visible_fraction": 0.745,
+    "occluded_fraction": 0.255
+   },
+   {
+    "label": "4hhb/A",
+    "solo_pixels": 82997,
+    "visible_pixels": 82997,
+    "visible_fraction": 1.0,
+    "occluded_fraction": 0.0
+   },
+   {
+    "label": "4hhb/C",
+    "solo_pixels": 83700,
+    "visible_pixels": 83700,
+    "visible_fraction": 1.0,
+    "occluded_fraction": 0.0
+   }
+  ],
+  "ascii": [
+   "................................................",
+   "...............................AA...............",
+   "...............DDD.......AAAAAAAAA..............",
+   "...........DDDDDDD...DD..AAA.AAAAA..............",
+   ".........DDDDDD.DDDDDDAAAAAAA.AAAAAA.A..........",
+   ".........DDDDDDDDDDDDDAAAAAAAAAAAAAAAAA.........",
+   "..........DDDDDDDDDDDDDAAAAAAAAAAABBAAA.........",
+   ".........DDDDDDDDDDDDDAAAAAAAAAAAAAAAAA.........",
+   ".........DDCCCCCDDDDDDDAAAAAAAABAAAAAAA.........",
+   ".........DDDCCCCDCDDD......AABAAABAABBAA........",
+   "........CCDDCCDCCCDCC......BBBABAAAABBB.........",
+   ".........CCCCCCCDCCCCCCCCBBBBBBAAAAAABB.........",
+   ".........CCCCCCCCCCCCCCCCCBBBBBBBBBBBBB.........",
+   ".........CCCDDCCCCCCCCCCCBBBBBBBBBBBBBB.........",
+   ".........CCCCCCCCCCCCCCCCCBBBBBBBBBBBBB.........",
+   "..........C.CCCCCC.CCCCCCCBCBBB..BBBBB..........",
+   ".............CCCCCC.CCC..BB...BBBBBBB...........",
+   "...............CCCCCCCC.......BBBBB.............",
+   "................................................",
+   "................................................"
+  ],
+  "legend": {
+   "A": "4hhb/A",
+   "B": "4hhb/B",
+   "C": "4hhb/C",
+   "D": "4hhb/D"
+  }
+ }
+}

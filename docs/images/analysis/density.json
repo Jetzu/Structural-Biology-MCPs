@@ -1,0 +1,107 @@
+{
+ "prompt": "Show the 2mFo-DFc density of ubiquitin at 1.5 sigma around the Ile44 hydrophobic patch (Leu8, Ile44, Val70) as a carved mesh.",
+ "commands": [
+  "fetch 1ubq, async=0",
+  "fetch 1ubq, type=2fofc, async=0",
+  "remove solvent",
+  "hide everything",
+  "show sticks, resi 8+44+70+42+68",
+  "color grey60, elem C",
+  "color red, elem O",
+  "color blue, elem N",
+  "color yelloworange, resi 8+44+70 and elem C",
+  "set stick_radius, 0.2",
+  "isomesh patch, 1ubq_2fofc, 1.5, resi 8+44+70+42+68, carve=1.8",
+  "color skyblue, patch",
+  "set mesh_width, 1.2",
+  "bg_color white",
+  "set antialias, 2",
+  "set depth_cue, 0",
+  "orient resi 8+44+70",
+  "zoom resi 8+44+70+42+68, 2"
+ ],
+ "failed": [],
+ "render": {
+  "summary": "Content covers 7% of the 1600x1200 frame (bounding box 56% x 62%). Centroid is centred. Free margins: left 27%, right 16%, top 16%, bottom 22%. Dominant colours: steelblue 42%, darkgrey 16%, cornflowerblue 5%, grey 5%. Background white; foreground/background contrast 5.6:1.",
+  "coverage": 0.0675,
+  "bbox": {
+   "px": [
+    433,
+    192,
+    1336,
+    932
+   ],
+   "frac": [
+    0.271,
+    0.16,
+    0.835,
+    0.777
+   ],
+   "width_frac": 0.564,
+   "height_frac": 0.617
+  },
+  "margins_frac": {
+   "left": 0.271,
+   "right": 0.165,
+   "top": 0.16,
+   "bottom": 0.223
+  },
+  "clipped_edges": [],
+  "palette": [
+   {
+    "name": "steelblue",
+    "share": 0.422
+   },
+   {
+    "name": "darkgrey",
+    "share": 0.164
+   },
+   {
+    "name": "cornflowerblue",
+    "share": 0.052
+   },
+   {
+    "name": "grey",
+    "share": 0.046
+   },
+   {
+    "name": "sand",
+    "share": 0.044
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 1.0
+  },
+  "ascii": [
+   "                                                ",
+   "                                                ",
+   "                                                ",
+   "                    .=++-                       ",
+   "                    =%+=#:                      ",
+   "                    :*##+.                      ",
+   "              .:== -++%*.                       ",
+   "             :+*#+. :-##:       :--:-=*=        ",
+   "              .#@#= -+*+=:     :##%#*==.        ",
+   "               =%%%::=-:.      .*#*#.           ",
+   "               .=#+.    .+=-    :=              ",
+   "                ...::==..#%*:                   ",
+   "                 .=+#+=. :%%+.                  ",
+   "                  .*%*+.:+##==                  ",
+   "                   +##+= .::..                  ",
+   "                     .:                         ",
+   "                                                ",
+   "                                                ",
+   "                                                ",
+   "                                                "
+  ]
+ },
+ "viewer": "pymol 3.1.0 (headless)"
+}

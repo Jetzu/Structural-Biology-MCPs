@@ -1,0 +1,98 @@
+{
+ "prompt": "Open the GroEL cryo-EM map EMD-1080 as a surface coloured radially from its centre, side view.",
+ "commands": [
+  "open 1080 from emdb",
+  "set bgColor white",
+  "lighting soft",
+  "volume #1 style surface",
+  "color radial #1 palette spectral",
+  "view",
+  "turn x 70",
+  "view",
+  "zoom 0.9"
+ ],
+ "failed": [],
+ "render": {
+  "summary": "Content covers 28% of the 1600x1200 frame (bounding box 48% x 73%). Centroid is centred. Free margins: left 26%, right 26%, top 11%, bottom 16%. Dominant colours: palegreen 35%, beige 11%, skyblue 7%, teal 6%. Background white; foreground/background contrast 2.1:1.",
+  "coverage": 0.2844,
+  "bbox": {
+   "px": [
+    421,
+    135,
+    1184,
+    1011
+   ],
+   "frac": [
+    0.263,
+    0.113,
+    0.74,
+    0.843
+   ],
+   "width_frac": 0.477,
+   "height_frac": 0.73
+  },
+  "margins_frac": {
+   "left": 0.263,
+   "right": 0.26,
+   "top": 0.113,
+   "bottom": 0.157
+  },
+  "clipped_edges": [],
+  "palette": [
+   {
+    "name": "palegreen",
+    "share": 0.348
+   },
+   {
+    "name": "beige",
+    "share": 0.106
+   },
+   {
+    "name": "skyblue",
+    "share": 0.071
+   },
+   {
+    "name": "teal",
+    "share": 0.06
+   },
+   {
+    "name": "black",
+    "share": 0.049
+   }
+  ],
+  "background": {
+   "rgb": [
+    255,
+    255,
+    255
+   ],
+   "hex": "#ffffff",
+   "name": "white",
+   "transparent": false,
+   "uniform_border": 1.0
+  },
+  "ascii": [
+   "                                                ",
+   "                                                ",
+   "                     :**+:                      ",
+   "              :=*#*==@@@@@**++#%:               ",
+   "              %@@@@@@@@@@@@@@@@@+               ",
+   "              %@@@@@@@@@@@@@@@@@@%=             ",
+   "             -@@@@@@@@@@@@@@@@@@@@-             ",
+   "             *@@@@@@@@@@@@@@@@@@@@:             ",
+   "             #@@@@@@@@@@@@@@@@@@@@.             ",
+   "             -@@@@@@@@@@@@@@@@@@@@.             ",
+   "             +@@@@@@@@@@@@@@@@@@@@+             ",
+   "            .@@@@@@@@@@@@@@@@@@@@@@             ",
+   "            :@@@@@@@@@@@@@@@@@@@@@+             ",
+   "             %@@@@@@@@@@@@@@@@@@@@=             ",
+   "             %@@@@@@@@@@@@@@@@@@@@@=            ",
+   "             .+@@@@@@@@@@@@@@@@@+=-.            ",
+   "               :-===--*##=-+===:                ",
+   "                                                ",
+   "                                                ",
+   "                                                "
+  ]
+ },
+ "viewer": "chimerax 1.11.1 (gui)"
+}
