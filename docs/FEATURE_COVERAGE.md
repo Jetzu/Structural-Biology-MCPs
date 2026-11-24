@@ -197,7 +197,7 @@ classifiers whose syntax matches ChimeraX's own toolbar bundles) runs the user's
 
 | | Claude Code | Codex |
 |---|---|---|
-| command | `claude -p <prompt> --output-format stream-json --verbose --include-partial-messages --allowedTools mcp__<app> --append-system-prompt <context> [--model m] [--effort e] [--resume id]` | `codex exec --json --approve-for-me --skip-git-repo-check [-m model] [-c model_reasoning_effort="e"] [resume id] <context + prompt>` |
+| command | `claude -p <prompt> --output-format stream-json --verbose --include-partial-messages --allowedTools mcp__<app> --append-system-prompt <context> [--model m] [--effort e] [--resume id]` | `codex exec --json -c approvals_reviewer="auto_review" -c approval_policy="on-request" -c sandbox_mode="workspace-write" --skip-git-repo-check [-m model] [-c model_reasoning_effort="e"] [resume id] <context + prompt>` |
 | tools the agent may use | only the `pymol` / `chimerax` MCP server tools are pre-approved (`allow_shell=True` would add `Bash,Edit,Write`, but no caller sets it) | all MCP servers from `~/.codex/config.toml` plus shell commands under Codex's workspace-write sandbox with automatic review |
 | file access | through the `python` tool only (it runs inside the viewer process with the user's permissions) | shell + `python` tool |
 | skills | `skills` / `skill` are MCP tools, so they are always allowed; whether a `-p` run can invoke Claude Code's own `Skill` tool or MCP prompts (`/mcp__pymol__use_skill`) without listing them in `--allowedTools` was **not verified** here | molmcp skills via the MCP tools; Codex support for MCP prompts/resources **not verified** |
@@ -463,8 +463,8 @@ PyMOL tools, 26 ChimeraX tools, resource `molmcp://<app>/skills`, template `molm
 `cmd.keyword`/`dir(cmd)` and every ChimeraX name cited in section 5 against the registered-command list, and checked
 the CLI flags in `claude --help` / `codex exec --help` (`--include-partial-messages`, `--effort`,
 `--append-system-prompt`, `--allowedTools`, `--resume`; `--json`, `--approve-for-me` = "route approval requests
-through automatic review using the workspace-write sandbox", `--skip-git-repo-check`, `exec resume [SESSION_ID]
-[PROMPT]`).
+through automatic review using the workspace-write sandbox" (passed as its three `-c` overrides because `exec resume`
+rejects the flag), `--skip-git-repo-check`, `exec resume [SESSION_ID] [PROMPT]`).
 
 Not verified (no GUI was launched, no network, no model calls): behaviour of the chat panel, `/model`, the
 toolbar buttons and the new window naming / focus-based `connect` selection at runtime; `claude -p` access to the `Skill` tool and MCP prompts; Codex handling of MCP prompts,

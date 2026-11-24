@@ -580,7 +580,7 @@ preserved (the command re-joins its arguments).
   | command | effect |
   |---|---|
   | `/model` | show the current provider · model · effort and the usage line |
-  | `/model [claude\|codex] [<model>\|default] [effort]` | set them, e.g. `/model claude opus high`, `/model codex gpt-5-codex`, `/model default` |
+  | `/model [claude\|codex] [<model>\|default] [effort]` | set them, e.g. `/model claude opus high`, `/model codex gpt-6-sol`, `/model default` |
   | `/claude`, `/codex` | switch provider (optionally followed by a prompt: `/codex what is shown?`) |
   | `/clear` | start a fresh conversation with the current provider |
   | `/skills` | ask the agent to list its skill files |
@@ -588,10 +588,13 @@ preserved (the command re-joins its arguments).
   | `/help` (or `/?`) | this list |
 
 * The **model button** at the bottom right (`claude code · default ▾`) opens a menu with one submenu per
-  provider: *Model* (Claude: default, fable, opus, sonnet, haiku; Codex: default, gpt-5-codex, gpt-5, o3,
-  gpt-6-sol — any other name can be typed with `/model <name>`), *Effort* (Claude: default, low, medium,
-  high, xhigh, max; Codex: default, minimal, low, medium, high, xhigh) and, for the provider not currently in
-  use, *Use Claude Code* / *Use Codex*.
+  provider: *Model*, *Effort* and, for the provider not currently in use, *Use Claude Code* / *Use Codex*.
+  The Model and Effort menus are read from the CLIs' own model caches (Claude Code:
+  `~/.claude/cache/model-catalog/`, Codex: `~/.codex/models_cache.json`), which the CLIs refresh themselves,
+  so new models appear without updating molmcp. Claude models are offered by alias (`opus`, `sonnet`, ...),
+  i.e. always the newest model of that family; any other name can be typed with `/model <name>`. A saved
+  model that has been superseded or no longer exists is switched to its current equivalent on the next run
+  (the panel shows a note). Without the caches the menus fall back to the Claude aliases and Codex's default.
   A provider whose CLI is not installed is greyed out as "(not installed)".
 * Conversations continue across turns per provider (Claude Code via `--resume <session id>`, Codex via
   `codex exec resume <thread id>`); `/clear` forgets the session.
@@ -602,8 +605,10 @@ preserved (the command re-joins its arguments).
 claude -p "<prompt>" --output-format stream-json --verbose --include-partial-messages \
        --allowedTools mcp__pymol --append-system-prompt "<context>" [--model M] [--effort E] [--resume <id>]
 
-codex exec --json --approve-for-me --skip-git-repo-check [-m M] [-c model_reasoning_effort="E"] "<prompt>"
-codex exec resume --json --approve-for-me --skip-git-repo-check [...] <thread id> "<prompt>"
+codex exec --json <approval> --skip-git-repo-check [-m M] [-c model_reasoning_effort="E"] "<prompt>"
+codex exec resume --json <approval> --skip-git-repo-check [...] <thread id> "<prompt>"
+# <approval> = -c approvals_reviewer="auto_review" -c approval_policy="on-request" -c sandbox_mode="workspace-write"
+# (what --approve-for-me sets; `codex exec resume` does not accept that flag)
 ```
 
 with `MOLMCP_PYMOL_PID` / `MOLMCP_CHIMERAX_PID` set to the viewer's process id, so the MCP server the CLI
@@ -828,7 +833,7 @@ the viewer's working directory (shown in the chat panel's welcome box and in `st
 * **What the agent can do:** `run` and `python` execute arbitrary viewer commands and Python inside
   PyMOL/ChimeraX with your user's rights — reading, writing and deleting files included. The in-app chat
   limits Claude Code to the viewer's MCP tools (`--allowedTools mcp__<app>`), and Codex is started with
-  `--approve-for-me` (its shell commands run in the workspace-write sandbox), but the viewer-side
+  the settings of `--approve-for-me` (its shell commands run in the workspace-write sandbox), but the viewer-side
   execution is by design unsandboxed. Review what the panel shows in its code windows; use `quit_pymol` /
   `quit_chimerax` only when you mean it (they terminate the viewer).
 * **Config edits** are limited to the files listed in §4, each backed up as `*.molmcp-backup` first.

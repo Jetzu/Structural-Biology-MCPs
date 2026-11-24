@@ -46,7 +46,7 @@ scripts it ran in a code window with a collapsed `⎿` result, and time, tokens 
 ## How it runs
 
 The panel spawns `claude -p ... --output-format stream-json --allowedTools mcp__<app>` or
-`codex exec --json --approve-for-me ...` from inside the application with `MOLMCP_<APP>_PID` set, so the MCP server
+`codex exec --json -c approvals_reviewer="auto_review" ...` from inside the application with `MOLMCP_<APP>_PID` set, so the MCP server
 the CLI starts attaches to this exact viewer process, even with several windows open.
 
 * The CLI is found on `PATH`, in the VS Code / Cursor Claude Code extension, in `~/.claude/local`, or (Codex) in the

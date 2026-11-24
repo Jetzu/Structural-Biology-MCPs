@@ -59,12 +59,16 @@ class TestArgv(unittest.TestCase):
         argv = agentcli.build_argv("codex", "/x/codex", "what is shown?", "chimerax", 7)
         self.assertEqual(argv[:2], ["/x/codex", "exec"])
         self.assertIn("--json", argv)
-        self.assertIn("--approve-for-me", argv)
+        # --approve-for-me only exists on `codex exec`, not on `exec resume`: the same -c overrides work on both
+        self.assertNotIn("--approve-for-me", argv)
+        self.assertIn('approvals_reviewer="auto_review"', argv)
         self.assertTrue(argv[-1].startswith("You are embedded in ChimeraX (process id 7)"))
         self.assertTrue(argv[-1].endswith("User request: what is shown?"))
         argv = agentcli.build_argv("codex", "/x/codex", "more", "pymol", 7, session_id="thread-1")
         self.assertEqual(argv[2], "resume")
         self.assertEqual(argv[-2:], ["thread-1", "more"])
+        self.assertNotIn("--approve-for-me", argv)
+        self.assertIn('sandbox_mode="workspace-write"', argv)
 
     def test_unknown_backend(self):
         with self.assertRaises(ValueError):
@@ -119,12 +123,71 @@ class TestRun(unittest.TestCase):
             if sys.platform.startswith("win"):
                 self.skipTest("shell script fake not runnable on Windows")
             got = []
-            run = agentcli.AgentRun("codex", "hi", "pymol", 42, lambda k, p: got.append((k, p)), exe=fake).start()
+            iso = {"MOLMCP_AGENT_SETTINGS": os.path.join(d, "s.json"), "CODEX_HOME": d, "CLAUDE_CONFIG_DIR": d}
+            with mock.patch.dict(os.environ, iso):
+                run = agentcli.AgentRun("codex", "hi", "pymol", 42, lambda k, p: got.append((k, p)), exe=fake).start()
             run.wait(30)
             self.assertEqual(run.session_id, "T")
             self.assertEqual(run.final_text, "hello from fake")
             self.assertIn(("done", ""), got)
             self.assertEqual(run.env["MOLMCP_PYMOL_PID"], "42")
+
+
+class TestModelCatalog(unittest.TestCase):
+    """Model menus come from the CLIs' own caches, so new releases show up without code changes."""
+
+    def setUp(self):
+        import json
+        self.tmp = tempfile.TemporaryDirectory()
+        d = self.tmp.name
+        cat = os.path.join(d, "claude", "cache", "model-catalog")
+        os.makedirs(cat)
+        with open(os.path.join(cat, "org-cc.json"), "w") as f:
+            json.dump({"fetchedAt": 5, "catalog": {"config": {
+                "models": [{"id": "claude-opus-9", "name": "Opus 9", "section": "main",
+                            "runtime": {"family": "opus", "effort_levels": ["low", "high", "max"]}},
+                           {"id": "claude-opus-8", "name": "Opus 8", "section": "overflow", "runtime": {"family": "opus"}}],
+                "provider_alias_targets": {"opus": {"default": "claude-opus-9"}}}}}, f)
+        os.makedirs(os.path.join(d, "codex"))
+        with open(os.path.join(d, "codex", "models_cache.json"), "w") as f:
+            json.dump({"models": [{"slug": "gpt-z", "visibility": "list", "priority": 1,
+                                   "supported_reasoning_levels": [{"effort": "low"}, {"effort": "ultra"}]}]}, f)
+        with open(os.path.join(d, "codex", "config.toml"), "w") as f:
+            f.write('model = "gpt-z"\n')
+        self.env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(d, "claude"),
+                                                "CODEX_HOME": os.path.join(d, "codex")})
+        self.env.start()
+        agentcli._catalog_memo.clear()
+
+    def tearDown(self):
+        self.env.stop()
+        agentcli._catalog_memo.clear()
+        self.tmp.cleanup()
+
+    def test_menus_and_healing(self):
+        self.assertEqual(agentcli.model_choices("claude"), [("", "default"), ("opus", "opus · Opus 9")])
+        self.assertEqual(agentcli.model_choices("codex"), [("", "default (gpt-z)"), ("gpt-z", "gpt-z")])
+        self.assertEqual(agentcli.effort_choices("claude", "opus"), ["", "low", "high", "max"])
+        self.assertEqual(agentcli.effort_choices("codex"), ["", "low", "ultra"])
+        self.assertEqual(agentcli.resolve_model("claude", "claude-opus-8")[0], "opus")
+        self.assertEqual(agentcli.resolve_model("codex", "gpt-old")[0], "")
+        self.assertEqual(agentcli.resolve_model("codex", "gpt-z"), ("gpt-z", ""))
+
+    def test_fallback_without_caches(self):
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "/nonexistent", "CODEX_HOME": "/nonexistent"}):
+            self.assertIn(("opus", "opus"), agentcli.model_choices("claude"))
+            self.assertEqual(agentcli.effort_choices("codex"), agentcli.EFFORT_CHOICES["codex"])
+
+
+class TestVendoredCopies(unittest.TestCase):
+    def test_plugins_carry_the_shared_files(self):
+        root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "molmcp", "inapp")
+        for name in ("agentcli.py", "agentchat_ui.py"):
+            with open(os.path.join(root, "shared", name), encoding="utf-8") as f:
+                shared = f.read()
+            for sub in (("pymol", "molmcp_pymol_bridge"), ("chimerax", "chimerax_agentbridge", "chimerax", "agentbridge")):
+                with open(os.path.join(root, *sub, name), encoding="utf-8") as f:
+                    self.assertEqual(f.read(), shared, "%s/%s differs from shared/%s" % ("/".join(sub), name, name))
 
 
 if __name__ == "__main__":
